@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ═══════════════════════════════════════════════
+       PAPER & INK — Light Mode (Primary Identity)
+       Warm cream canvas with dusty navy ink accent.
+       ═══════════════════════════════════════════════ */
+
+    --bg-canvas: #FAF9F7;
+    --bg-sidebar: #F5F3F0;
+    --bg-surface-1: #FFFFFF;
+    --bg-surface-2: #F5F3F0;
+    --bg-surface-3: #EDEBE8;
+
+    --text-primary: #1A1A1A;
+    --text-secondary: #64635E;
+    --text-tertiary: #9E9C97;
+
+    --border-subtle: #F0EDE9;
+    --border-default: #E8E5E0;
+    --border-strong: #D5D1CA;
+
+    /* Dusty Navy / Muted Cobalt — the "ink" accent */
+    --accent: #3D5A80;
+    --accent-hover: #2C4A6E;
+    --accent-subtle: #EEF2F7;
+    --accent-contrast: #FFFFFF;
+
+    /* Semantic Status — muted, elegant */
+    --danger: #C53030;
+    --danger-subtle: #FFF5F5;
+    --warning: #B7791F;
+    --warning-subtle: #FFFFF0;
+    --success: #276749;
+    --success-subtle: #F0FFF4;
+    --info: #2B6CB0;
+    --info-subtle: #EBF8FF;
+
+    --radius-sm: 8px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 16px;
+
+    /* Warm shadow palette */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04);
+  }
+
+  .dark {
+    /* ═══════════════════════════════════════════════
+       PAPER & INK — Dark Mode (Warm Charcoal)
+       Refined counterpart, not the main identity.
+       ═══════════════════════════════════════════════ */
+
+    --bg-canvas: #141413;
+    --bg-sidebar: #1A1917;
+    --bg-surface-1: #1E1D1B;
+    --bg-surface-2: #252422;
+    --bg-surface-3: #2E2D2A;
+
+    --text-primary: #EEECE8;
+    --text-secondary: #A5A39E;
+    --text-tertiary: #706E69;
+
+    --border-subtle: #232220;
+    --border-default: #2E2D2A;
+    --border-strong: #3D3B37;
+
+    --accent: #6B9AC4;
+    --accent-hover: #8BB4D9;
+    --accent-subtle: rgba(107, 154, 196, 0.12);
+    --accent-contrast: #141413;
+
+    --danger: #FC8181;
+    --danger-subtle: rgba(252, 129, 129, 0.1);
+    --warning: #F6E05E;
+    --warning-subtle: rgba(246, 224, 94, 0.1);
+    --success: #68D391;
+    --success-subtle: rgba(104, 211, 145, 0.1);
+    --info: #63B3ED;
+    --info-subtle: rgba(99, 179, 237, 0.1);
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.3);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border-default);
+  }
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  ::selection {
+    background-color: var(--accent-subtle);
+    color: var(--text-primary);
+  }
+}
+
+/* ══════════════════════════════════════
+   Typography Utilities
+   ══════════════════════════════════════ */
+
+.font-editorial {
+  font-family: var(--font-editorial), Georgia, "Times New Roman", serif;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ══════════════════════════════════════
+   Hairline Borders
+   ══════════════════════════════════════ */
+
+.hairline-b { border-bottom: 1px solid var(--border-default); }
+.hairline-t { border-top: 1px solid var(--border-default); }
+.hairline-r { border-right: 1px solid var(--border-default); }
+
+/* ══════════════════════════════════════
+   Safe Area Insets for Mobile/PWA
+   ══════════════════════════════════════ */
+
+.safe-area-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.safe-area-top { padding-top: env(safe-area-inset-top, 0px); }
+.pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom, 1rem)); }
+
+/* ══════════════════════════════════════
+   Scrollbar — Elegant & Thin
+   ══════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* ══════════════════════════════════════
+   Animations
+   ══════════════════════════════════════ */
+
+@keyframes entrance {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Reduced motion preference support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

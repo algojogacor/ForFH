@@ -1,0 +1,100 @@
+# ForFH V4 - Security Architecture & Hardening Guide
+
+## 1. Authentication & Credential Storage
+
+### 1.1 Password Hashing Specification
+- **Algorithm**: `crypto.scrypt` with OWASP-recommended parameters:
+  - $N = 16384$ (Cost parameter)
+  - $r = 8$ (Block size)
+  - $p = 1$ (Parallelization)
+  - $\text{keylen} = 64$ bytes
+- **Per-User Salt**: 16 cryptographically secure random bytes generated per user registration.
+- **Server-Wide Pepper**: 32-character minimum secret (`PASSWORD_PEPPER`) applied prior to key derivation.
+- **Constant-Time Verification**: Verification employs `crypto.timingSafeEqual` over derived buffers to eliminate timing side-channel vulnerabilities.
+
+### 1.2 Session Security
+- **Session Tokens**: 32 random bytes (64 hex characters) generating 256 bits of entropy.
+- **One-Way Database Hashing**: Raw tokens are never stored in the database. The database persists only `SHA-256(raw_token)` in `sessions.token_hash`.
+- **Cookie Flags**:
+  - `HttpOnly`: Mitigates XSS token exfiltration.
+  - `Secure`: Transmitted strictly over HTTPS in production.
+  - `SameSite=Lax`: Mitigates CSRF exploits on navigation.
+  - `__Host-` prefix enforced in production (`__Host-forfh-session`).
+
+---
+
+## 2. Multi-Tenant & Cross-User Authorization
+
+### 2.1 Identity Derivation
+Every API route strictly extracts identity from the verified session cookie via `getSessionUser()`. The client cannot pass a `userId` in the body or query parameter to impersonate another user.
+
+### 2.2 Strict Database Scoping
+Every mutation (`INSERT`, `UPDATE`, `DELETE`) and read query (`SELECT`) enforces tenant boundaries:
+```sql
+WHERE id = ? AND user_id = ?
+```
+
+### 2.3 Parent Entity Ownership Enforcement
+When creating child entities (tasks, subtasks, notes, readings, exams, attendance, grades, files, bookmarks), the application verifies that the parent entity belongs to the authenticated user before insertion:
+
+| Target Resource | Parent Field | Enforcement Check |
+|---|---|---|
+| `/api/courses` | `academicTermId` | `WHERE id = academicTermId AND userId = authUser.id` |
+| `/api/tasks` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+| `/api/notes` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+| `/api/exams` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+| `/api/attendance` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+| `/api/grades` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+| `/api/readings` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+| `/api/files/record` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+| `/api/legal/bookmarks` | `courseId` | `WHERE id = courseId AND userId = authUser.id` |
+
+---
+
+## 3. Storage & Upload Security
+
+### 3.1 Filename & Path Traversal Sanitization
+All filenames undergo strict sanitization via `sanitizeFilename()`:
+- Path separators (`/`, `\`) and control characters are stripped.
+- Filename length is constrained between 1 and 255 characters.
+- Executable extensions are rejected: `.exe`, `.bat`, `.cmd`, `.sh`, `.vbs`, `.ps1`, `.msi`, `.dll`, `.com`, `.jar`, `.jsp`, `.php`, `.asp`.
+
+### 3.2 Server-Side Verification Before DB Insertion
+Client-reported metadata is never trusted blindly. `/api/files/record` invokes Google Drive's API directly from the server to verify:
+1. File exists and is accessible by the application service account.
+2. File is not marked as trashed.
+3. Actual byte size and MIME type match verified metadata.
+
+---
+
+## 4. Webhook & Background Worker Security
+
+### 4.1 Fail-Closed QStash Webhook
+- In production, `/api/internal/reminders/process` rejects all unsigned requests (`401 Unauthorized`).
+- Upstash signatures are verified using `@upstash/qstash` `Receiver` with dual signing key support (`QSTASH_CURRENT_SIGNING_KEY` and `QSTASH_NEXT_SIGNING_KEY`).
+
+### 4.2 Web Push Key Security
+- VAPID private keys are loaded from environment variables and never logged or serialized to the client.
+- Dead subscriptions returning `404 Not Found` or `410 Gone` are immediately pruned from the database.
+
+---
+
+## 5. Secret Redaction & Logging Safeguards
+
+The centralized logging utility `src/lib/logger.ts` filters log output across all log levels (`info`, `warn`, `error`, `debug`) using comprehensive regex redaction patterns:
+- Bearer tokens & Authorization headers
+- Turso auth tokens
+- Groq / Ollama API keys
+- QStash signing keys & tokens
+- Google OAuth secrets & refresh tokens
+- User passwords & cookie strings
+
+---
+
+## 6. HTTP Security Headers
+
+Configured in `next.config.ts`:
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy: camera=(), microphone=(), geolocation=()`
