@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     "Personal Academic Operating System untuk Mahasiswa. Manajemen jadwal, tugas, catatan, dan perkuliahan.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/favicon.ico",
+    icon: "/icons/icon.svg",
   },
 };
 
@@ -52,8 +52,8 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
-                  const stored = localStorage.getItem('theme');
-                  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  var stored = localStorage.getItem('theme');
+                  var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                   if (stored === 'dark' || (!stored && prefersDark)) {
                     document.documentElement.classList.add('dark');
                   } else {
