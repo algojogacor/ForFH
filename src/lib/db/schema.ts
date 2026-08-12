@@ -467,9 +467,10 @@ export const grades = sqliteTable(
 // 5b. Campus data (rekap & info kampus dari Kampus Kita)
 // ----------------------------------------------------
 // Satu baris per (user, jenis). data_json = JSON.stringify baris hasil sync:
-// jenis "presensi" = hasil presensiToRecap (agregat per MK), lainnya = baris
-// mentah rowsFrom. Data bukan rahasia (mirip courses/grades), disimpan
-// plaintext; token kampus tetap terenkripsi.
+// jenis "presensi" = hasil presensiToRecap (agregat per MK), jenis
+// "instruksi_tugas" = hasil crawl section summary HE-BAT saat connect (bukan
+// dari API KK), lainnya = baris mentah rowsFrom. Data bukan rahasia (mirip
+// courses/grades), disimpan plaintext; token kampus tetap terenkripsi.
 export const CAMPUS_DATA_JENIS = [
   "presensi",
   "pembayaran",
@@ -479,6 +480,7 @@ export const CAMPUS_DATA_JENIS = [
   "hist_her",
   "penyerahan_ktm",
   "kalender_akademik",
+  "instruksi_tugas",
 ] as const;
 export type CampusDataJenis = (typeof CAMPUS_DATA_JENIS)[number];
 

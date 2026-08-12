@@ -261,3 +261,84 @@ export function classNameFromCategories(categories: string | undefined): string 
   }
   return "";
 }
+
+// ---- instruksi tugas HE-BAT (section summary halaman kursus) ----------------
+// Feed iCal HE-BAT punya DESCRIPTION kosong; instruksi asli ada di section
+// summary tiap kursus. Crawl saat connect (sesi aktif) dan simpan di
+// campus_data jenis "instruksi_tugas" — matching tugas dilakukan by nama
+// aktivitas (data-activityname) di section yang sama.
+
+export interface HebatSection {
+  sectionId: string; // data-id <li id="section-..."> (id section Moodle)
+  sectionName: string; // data-sectionname (judul section)
+  summary: string; // HTML mentah div.summarytext ("" kalau tidak ada)
+  assignments: string[]; // semua data-activityname dalam section, urut kemunculan
+}
+
+export interface HebatCourseInstructions {
+  courseId: string;
+  shortname: string; // segmen ke-2 dari fullname H1
+  fullname: string;
+  sections: HebatSection[];
+}
+
+// Halaman /course/view.php?id=N. H1 = fullname ("2026Ganjil - FHK... - Nama MK -
+// ..."), shortname = segmen ke-2 split " - ". Section dipotong per
+// <li id="section-..."> (blok section; aktivitas <li class="activity"> bukan
+// <li id="section-"> jadi tidak ikut terpotong). Urutan section dipertahankan.
+export function parseCoursePage(html: string, courseId: string): HebatCourseInstructions {
+  const fullname = (/<h1[^>]*>([^<]+)<\/h1>/.exec(html)?.[1] || "").trim();
+  const shortname = fullname.split(" - ")[1] || "";
+  const sections: HebatSection[] = [];
+  const marker = '<li id="section-';
+  let start = html.indexOf(marker);
+  while (start >= 0) {
+    const next = html.indexOf(marker, start + marker.length);
+    const block = next >= 0 ? html.slice(start, next) : html.slice(start);
+    const head = block.slice(0, 500);
+    const sectionId = /data-id="(\d+)"/.exec(head)?.[1] || "";
+    if (sectionId) {
+      const sectionName = /data-sectionname="([^"]*)"/.exec(head)?.[1] || "";
+      // Ambil summarytext pertama dalam blok (HTML mentah, dibersihkan nanti)
+      const summary = /<div class="summarytext"[^>]*>(.*?)<\/div>/s.exec(block)?.[1] || "";
+      const assignments: string[] = [];
+      const actRe = /data-activityname="([^"]*)"/g;
+      let m: RegExpExecArray | null;
+      while ((m = actRe.exec(block))) assignments.push(m[1]);
+      sections.push({ sectionId, sectionName, summary, assignments });
+    }
+    if (next < 0) break;
+    start = next;
+  }
+  return { courseId, shortname, fullname, sections };
+}
+
+// Normalisasi teks untuk pencocokan nama (case-insensitive, whitespace
+// beruntun jadi satu spasi) — dipakai mencocokkan title tugas dengan
+// data-activityname di halaman kursus.
+export function normalizeTaskText(s: string): string {
+  return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Cari instruksi untuk satu tugas: cocokkan kursus (shortname == courseCode,
+// atau fullname memuat courseName), lalu section yang berisi aktivitas
+// bernama task.title. Kembalikan teks instruksi (HTML dibersihkan), null
+// kalau kursus/section tidak ditemukan atau summary kosong.
+export function instructionFor(
+  instructions: HebatCourseInstructions[],
+  task: { courseCode: string; courseName: string; title: string }
+): string | null {
+  if (!task.title) return null;
+  const entry = instructions.find(
+    (e) =>
+      e.shortname === task.courseCode ||
+      (!!task.courseName && normalizeTaskText(e.fullname).includes(normalizeTaskText(task.courseName)))
+  );
+  if (!entry) return null;
+  const target = normalizeTaskText(task.title);
+  const section = entry.sections.find((s) =>
+    s.assignments.some((a) => normalizeTaskText(a) === target)
+  );
+  if (!section || !section.summary) return null;
+  return descriptionToText(section.summary);
+}

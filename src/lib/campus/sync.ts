@@ -32,7 +32,14 @@ import { decryptText, encryptText } from "@/lib/crypto/at-rest";
 import { sendPushToUser } from "@/lib/notifications/web-push";
 import { KampusKitaClient } from "./kampuskita";
 import { fetchIcs, parseIcs } from "./hebat";
-import { jadwalToSchedules, khsToGrades, icsToTask, presensiToRecap } from "./mappings";
+import {
+  jadwalToSchedules,
+  khsToGrades,
+  icsToTask,
+  presensiToRecap,
+  instructionFor,
+} from "./mappings";
+import type { HebatCourseInstructions } from "./mappings";
 
 const SYNC_INTERVAL_MIN = Number(process.env.FORFH_SYNC_INTERVAL_MIN || 30);
 const MAX_KHS_SEMESTERS = 6;
@@ -45,6 +52,22 @@ export interface CampusSyncSummary {
   newTasks: number;
   grades: number;
   campusData: number; // jumlah jenis info kampus/rekap yang berhasil di-update
+  instruksi: number; // jumlah tugas yang mendapat instruksi dari section summary HE-BAT
+}
+
+// Instruksi tugas HE-BAT hasil crawl saat connect (campus_data jenis
+// "instruksi_tugas"). JSON.parse defensif — data lama/rusak dianggap kosong.
+async function loadInstructions(userId: string): Promise<HebatCourseInstructions[]> {
+  const row = await db.select().from(campusData).where(
+    and(eq(campusData.userId, userId), eq(campusData.jenis, "instruksi_tugas"))
+  ).limit(1).then((rows) => rows[0]);
+  if (!row) return [];
+  try {
+    const parsed = JSON.parse(row.dataJson);
+    return Array.isArray(parsed) ? (parsed as HebatCourseInstructions[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 // Tabel sasaran memakai kolom bersama user_id / external_id / id / updated_at.
@@ -72,7 +95,7 @@ async function upsertByExternal<T extends { id: string }>(
 // campusData tidak punya external_id — upsert by (user_id, jenis).
 // Tetap dijalankan saat rows kosong ([]) agar UI bisa membedakan
 // "sudah sync tapi kosong" vs "belum pernah sync".
-async function upsertCampusData(userId: string, jenis: CampusDataJenis, rows: unknown[]): Promise<void> {
+export async function upsertCampusData(userId: string, jenis: CampusDataJenis, rows: unknown[]): Promise<void> {
   const existing = await db.select().from(campusData).where(
     and(eq(campusData.userId, userId), eq(campusData.jenis, jenis))
   ).limit(1).then((rows_) => rows_[0]);
@@ -103,7 +126,7 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
   if (!opts.force && acc.lastSyncAt) {
     const elapsedMin = (Date.now() - acc.lastSyncAt.getTime()) / 60000;
     if (elapsedMin < SYNC_INTERVAL_MIN) {
-      return { skipped: true, courses: 0, schedules: 0, tasks: 0, newTasks: 0, grades: 0, campusData: 0 };
+      return { skipped: true, courses: 0, schedules: 0, tasks: 0, newTasks: 0, grades: 0, campusData: 0, instruksi: 0 };
     }
   }
 
@@ -121,6 +144,10 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
       logger.warn(`sync ${userId}: authtoken HE-BAT tidak bisa didekripsi, dilewati`);
     }
   }
+
+  // Instruksi tugas (section summary) dari crawl saat connect — dipakai untuk
+  // mengisi description tugas yang kosong (DESCRIPTION iCal selalu kosong).
+  const instructions = await loadInstructions(userId);
 
   const client = new KampusKitaClient(jwt);
 
@@ -187,9 +214,13 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
 
   // --- upsert tasks dari iCal HE-BAT (externalId = UID event) ------------------
   const now = Date.now();
-  let taskCount = 0, newTasks = 0;
+  let taskCount = 0, newTasks = 0, instructionCount = 0;
   for (const ev of icsEvents) {
     const t = icsToTask(ev);
+    // DESCRIPTION iCal selalu kosong — isi dari instruksi section summary HE-BAT
+    const instr = t.description ? null : instructionFor(instructions, t);
+    const description = instr || t.description || null;
+    if (instr) instructionCount++;
     const courseId = t.courseCode ? courseIdsByCode.get(t.courseCode) : undefined;
     const existing = t.externalId
       ? await db.query.tasks.findFirst({ where: and(eq(tasks.userId, userId), eq(tasks.externalId, t.externalId)) })
@@ -197,7 +228,7 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     if (existing) {
       await db.update(tasks).set({
         title: t.title,
-        description: t.description || null,
+        description,
         dueAt: t.dueAt ? new Date(t.dueAt) : null,
         courseId: courseId || existing.courseId,
         updatedAt: new Date(),
@@ -209,7 +240,7 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
         userId,
         courseId: courseId || null,
         title: t.title,
-        description: t.description || null,
+        description,
         type: "assignment",
         dueAt: t.dueAt ? new Date(t.dueAt) : null,
         priority: "medium",
@@ -297,11 +328,13 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     newTasks,
     grades: gradeCount,
     campusData: campusDataCount,
+    instruksi: instructionCount,
   };
+  const instruksiSuffix = instructionCount > 0 ? ` · ${instructionCount} instruksi` : "";
   await db.update(campusAccounts).set({
     lastSyncAt: new Date(),
     lastSyncStatus: "ok",
-    lastSyncSummary: `${taskCount} tugas · ${scheduleCount} jadwal · ${gradeCount} nilai · ${courseCount} MK · ${campusDataCount} info`,
+    lastSyncSummary: `${taskCount} tugas · ${scheduleCount} jadwal · ${gradeCount} nilai · ${courseCount} MK · ${campusDataCount} info${instruksiSuffix}`,
     lastSyncError: null,
     updatedAt: new Date(),
   }).where(eq(campusAccounts.userId, userId));

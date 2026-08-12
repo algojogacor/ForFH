@@ -3,6 +3,13 @@
 // authtoken kalender (dari /calendar/export.php), lalu simpan authtoken itu
 // terenkripsi — semua sync berikutnya pakai authtoken (tanpa password,
 // tanpa sesi). Form login Moodle standar (logintoken CSRF), bukan SSO.
+import { logger } from "@/lib/logger";
+import { parseCoursePage } from "./mappings";
+import type { HebatCourseInstructions } from "./mappings";
+
+// Jenis struktur crawl instruksi dipakai juga di sini (lihat mappings.ts).
+export type { HebatCourseInstructions, HebatSection } from "./mappings";
+
 const BASE = "https://hebat.elearning.unair.ac.id";
 const UA = "forfh-sync/1.0 (Mozilla/5.0 compatible)";
 const TIMEOUT_MS = 15000;
@@ -24,6 +31,15 @@ class CookieJar {
     if (!setCookie) return;
     for (const part of setCookie.split(",")) {
       const m = part.match(/^\s*([^=;]+)=([^;]*)/);
+      if (m) this.map.set(m[1].trim(), m[2]);
+    }
+  }
+  // Lanjutkan sesi dari header cookie ("k=v; k2=v2") — dipakai untuk crawl
+  // instruksi dengan sesi connect yang masih hidup. Hanya di memory.
+  seed(header: string) {
+    if (!header) return;
+    for (const part of header.split(";")) {
+      const m = part.match(/^\s*([^=]+)=([^;]*)/);
       if (m) this.map.set(m[1].trim(), m[2]);
     }
   }
@@ -75,6 +91,10 @@ function htmlAttr(html: string, name: string): string {
 export interface HebatConnect {
   userid: string;
   authtoken: string;
+  // Cookie sesi Moodle aktif (MoodleSession+MOODLEID1_) — memory-only, TIDAK
+  // pernah disimpan/di-log/di-return ke client. Dipakai crawl instruksi saat
+  // connect, lalu dibuang.
+  sessionCookie?: string;
 }
 
 // Login form HE-BAT (NIM + password), lalu ambil authtoken kalender dari
@@ -124,7 +144,7 @@ export async function connectHebat(nim: string, password: string): Promise<Hebat
   const userid = /userid=(\d+)/.exec(url)?.[1] || "";
   const authtoken = /authtoken=([A-Za-z0-9]+)/.exec(url)?.[1] || "";
   if (!userid || !authtoken) throw new HebatError(0, "HE-BAT: userid/authtoken tidak ada di URL kalender.");
-  return { userid, authtoken };
+  return { userid, authtoken, sessionCookie: jar.header() };
 }
 
 // Fetch feed iCal tanpa sesi (authtoken cukup). Rentang: 90 hari ke belakang,
@@ -183,4 +203,44 @@ export function parseIcs(t: string): IcsEvent[] {
     }
   }
   return events;
+}
+
+// Crawl instruksi tugas saat connect: ambil course id user dari halaman
+// kalender (upcoming + month, dedupe), lalu halaman tiap kursus untuk section
+// summary. Sesi dipakai via sessionCookie (memory-only). Kursus yang gagal
+// di-skip (bukan menggagalkan crawl); throw hanya kalau halaman kalender
+// tidak bisa diambil. Batasi concurrency ~4, TIMEOUT_MS per request — total
+// crawl aman di bawah 60 detik.
+export async function fetchCourseInstructions(sessionCookie: string): Promise<HebatCourseInstructions[]> {
+  const jar = new CookieJar();
+  jar.seed(sessionCookie);
+
+  // 1. Kumpulkan course id dari kalender (upcoming + month) — dedupe.
+  const courseIds = new Set<string>();
+  for (const view of [
+    "view=upcoming",
+    `view=month&time=${Math.floor(Date.now() / 1000)}`,
+  ]) {
+    const r = await hop(`${BASE}/calendar/view.php?${view}`, { method: "GET" }, jar, 0);
+    if (r.status !== 200) {
+      throw new HebatError(r.status, `HE-BAT: halaman kalender tidak dapat diakses (HTTP ${r.status}).`);
+    }
+    for (const m of r.text.matchAll(/course\/view\.php\?id=(\d+)/g)) courseIds.add(m[1]);
+  }
+
+  // 2. Ambil halaman tiap kursus — paralel dengan batas concurrency ~4.
+  const ids = Array.from(courseIds);
+  const instructions: HebatCourseInstructions[] = [];
+  for (let i = 0; i < ids.length; i += 4) {
+    const results = await Promise.allSettled(ids.slice(i, i + 4).map(async (id) => {
+      const r = await hop(`${BASE}/course/view.php?id=${id}`, { method: "GET" }, jar, 0);
+      if (r.status !== 200) throw new HebatError(r.status, `kursus HTTP ${r.status}`);
+      return parseCoursePage(r.text, id);
+    }));
+    for (const res of results) {
+      if (res.status === "fulfilled") instructions.push(res.value);
+      else logger.warn(`HE-BAT: instruksi kursus gagal diambil: ${(res.reason as Error)?.message || res.reason}`);
+    }
+  }
+  return instructions;
 }

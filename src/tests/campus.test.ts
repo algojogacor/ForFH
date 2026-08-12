@@ -14,6 +14,8 @@ import {
   jadwalToSchedules,
   khsToGrades,
   presensiToRecap,
+  parseCoursePage,
+  instructionFor,
 } from "../lib/campus/mappings";
 import { CAMPUS_DATA_JENIS } from "../lib/db/schema";
 
@@ -40,6 +42,39 @@ CATEGORIES:2026Ganjil - FHK25601033 - Hukum Acara Pidana - S1 - Ilmu Hukum
 END:VEVENT
 END:VCALENDAR
 `;
+
+// Fixture halaman kursus HAM A-2 (tereduksi dari probe nyata): H1 fullname,
+// section General tanpa summary/aktivitas, lalu section 1 dengan summarytext
+// + 3 aktivitas. Struktur asli: <li id="section-..."> PEMBUKA diikuti header
+// & activity-item DI DALAM blok section (bukan <li id="section-"> per aktivitas).
+const FIXTURE_HAM = `<html><body>
+<h1>2026Ganjil - FHK25601032 - Hak Asasi Manusia - S1 - Ilmu Hukum - 2025 - A-2</h1>
+<ul class="course-section-list">
+<li id="section-0" class="section course-section main clearfix" data-sectionid="0" data-for="section" data-id="69590" data-number="0" data-sectionname="General">
+<div class="course-section-header"><h3 class="sectionname">General</h3></div>
+</li>
+<li id="section-1" class="section course-section main clearfix" data-sectionid="1" data-for="section" data-id="75968" data-number="1" data-sectionname="11 Agustus 2026: Assessment HAM">
+<div class="course-section-header"><h3 class="sectionname">11 Agustus 2026: Assessment HAM</h3>
+<div class="summarytext"><p>Mahasiswa yang saya hormati,</p><p>Silakan kerjakan <b>Assessment HAM</b>.</p></div>
+</div>
+<div class="activity-item focus-control " data-activityname="the story of human rights" data-region="activity-card"></div>
+<div class="activity-item focus-control " data-activityname="Assessment HAM" data-region="activity-card"></div>
+<div class="activity-item focus-control " data-activityname="what are human rights" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`;
+
+// Fixture kursus PIH (C-2): satu section beraktivitas TANPA summarytext sama
+// sekali — graceful: tugas tampil tanpa instruksi.
+const FIXTURE_PIH = `<html><body>
+<h1>2026Ganjil - FHK25601001 - Pengantar Ilmu Hukum - S1 - Ilmu Hukum - 2025 - C-2</h1>
+<ul class="course-section-list">
+<li id="section-2" class="section course-section main clearfix" data-sectionid="2" data-for="section" data-id="80497" data-number="2" data-sectionname="Pertemuan 2: Hakikat Ilmu Hukum">
+<div class="course-section-header"><h3 class="sectionname">Pertemuan 2: Hakikat Ilmu Hukum</h3></div>
+<div class="activity-item focus-control " data-activityname="Pengumpulan Tugas Resume Buku PIH Prof Peter Bab I" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`;
 
 export async function runCampusTests(assert: (condition: boolean, name: string) => void) {
   console.log("  ── Campus sync (enkripsi at-rest) ──");
@@ -172,8 +207,48 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
   assert(recaps[1].persen === 50, "perhitungan dibulatkan (7/14 -> 50)");
   assert(recaps[2].tm === null && recaps[2].hadir === null && recaps[2].persen === null, "tanpa angka -> null");
 
+  console.log("  ── Campus sync (instruksi tugas HE-BAT) ──");
+  const ham = parseCoursePage(FIXTURE_HAM, "16332");
+  assert(ham.courseId === "16332", "courseId dari argumen");
+  assert(ham.shortname === "FHK25601032", "shortname = segmen ke-2 fullname H1");
+  assert(ham.fullname.includes("Hak Asasi Manusia"), "fullname utuh dari H1");
+  assert(ham.sections.length === 2, "dua section di-parse (General + Assessment)");
+  assert(ham.sections[0].sectionId === "69590" && ham.sections[0].sectionName === "General", "section General terbaca");
+  assert(ham.sections[0].summary === "" && ham.sections[0].assignments.length === 0, "General tanpa summary/aktivitas");
+  assert(ham.sections[1].sectionId === "75968", "sectionId = data-id section 1");
+  assert(ham.sections[1].sectionName.includes("Assessment HAM"), "sectionName dari data-sectionname");
+  assert(ham.sections[1].summary.includes("Mahasiswa"), "summarytext section terbaca");
+  assert(
+    ham.sections[1].assignments.includes("Assessment HAM") && ham.sections[1].assignments.includes("the story of human rights"),
+    "assignments dikumpulkan per section (urutan kemunculan)"
+  );
+  assert(ham.sections[1].assignments.length === 3, "tiga aktivitas dalam section 1");
+
+  const pih = parseCoursePage(FIXTURE_PIH, "16319");
+  assert(pih.sections.length === 1, "PIH satu section");
+  assert(pih.sections[0].summary === "", "PIH tanpa summarytext -> summary kosong");
+  assert(pih.sections[0].assignments[0] === "Pengumpulan Tugas Resume Buku PIH Prof Peter Bab I", "assignments PIH terbaca");
+
+  const instrHam = instructionFor([ham], { courseCode: "FHK25601032", courseName: "Hak Asasi Manusia", title: "Assessment HAM" });
+  assert(!!instrHam && instrHam.includes("Mahasiswa"), "cocok shortname + assignment -> instruksi");
+  assert(!!instrHam && instrHam.includes("Silakan kerjakan"), "HTML summary dibersihkan jadi teks");
+  assert(
+    instructionFor([pih], { courseCode: "FHK25601001", courseName: "Pengantar Ilmu Hukum", title: "Pengumpulan Tugas Resume Buku PIH Prof Peter Bab I" }) === null,
+    "summary kosong -> null (graceful)"
+  );
+  assert(
+    instructionFor([ham], { courseCode: "XXX999", courseName: "Kursus Asing", title: "Assessment HAM" }) === null,
+    "kursus tak dikenal -> null"
+  );
+  assert(
+    !!instructionFor([ham], { courseCode: "FHK25601032", courseName: "Hak Asasi Manusia", title: "  assessment  ham " }),
+    "case/whitespace beda tetap cocok (normalisasi)"
+  );
+  assert(instructionFor([], { courseCode: "FHK25601032", courseName: "Hak Asasi Manusia", title: "Assessment HAM" }) === null, "tanpa instruksi -> null");
+
   console.log("  ── Campus sync (jenis campus_data) ──");
-  assert(CAMPUS_DATA_JENIS.length === 8, "8 jenis data kampus terdaftar");
-  assert(new Set(CAMPUS_DATA_JENIS).size === 8, "jenis tidak duplikat");
+  assert(CAMPUS_DATA_JENIS.length === 9, "9 jenis data kampus terdaftar");
+  assert(new Set(CAMPUS_DATA_JENIS).size === 9, "jenis tidak duplikat");
   assert(CAMPUS_DATA_JENIS.includes("presensi") && CAMPUS_DATA_JENIS.includes("pembayaran"), "presensi + pembayaran terdaftar");
+  assert(CAMPUS_DATA_JENIS.includes("instruksi_tugas"), "instruksi_tugas terdaftar");
 }

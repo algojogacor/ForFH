@@ -3,8 +3,8 @@ import { eq } from "drizzle-orm";
 import { db, campusAccounts } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { connectHebat } from "@/lib/campus/hebat";
-import { saveHebatToken } from "@/lib/campus/sync";
+import { connectHebat, fetchCourseInstructions } from "@/lib/campus/hebat";
+import { saveHebatToken, upsertCampusData } from "@/lib/campus/sync";
 import { logger } from "@/lib/logger";
 
 // Hubungkan ulang HE-BAT dengan password terpisah (kalau beda dari password
@@ -39,7 +39,21 @@ export async function POST(req: NextRequest) {
   try {
     const h = await connectHebat(acc.campusNim, password);
     await saveHebatToken(session.id, h.userid, h.authtoken);
-    return NextResponse.json({ success: true, userid: h.userid });
+
+    // Crawl instruksi tugas (section summary) pakai sesi aktif — gagal TIDAK
+    // menggagalkan connect (authtoken tetap tersimpan). upsert tetap dijalankan
+    // walau kosong ([]) agar UI tahu instruksi sudah pernah di-crawl.
+    let instruksiCount = 0;
+    if (h.sessionCookie) {
+      try {
+        const inst = await fetchCourseInstructions(h.sessionCookie);
+        await upsertCampusData(session.id, "instruksi_tugas", inst);
+        instruksiCount = inst.length;
+      } catch (error: any) {
+        logger.warn(`HE-BAT crawl instruksi gagal (user ${session.id}): ${error?.message || error}`);
+      }
+    }
+    return NextResponse.json({ success: true, userid: h.userid, instruksi: instruksiCount });
   } catch (error: any) {
     logger.warn(`HE-BAT reconnect gagal (user ${session.id}): ${error?.message || error}`);
     const status = error?.status === 401 ? 401 : 400;
