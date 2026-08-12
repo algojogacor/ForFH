@@ -14,6 +14,9 @@ ForFH V4 mengganti login username/password internal dengan **login email kampus*
   sehingga kebocoran DB saja tidak cukup untuk membuka token.
 - **Kredensial tidak pernah di-log** — logger global meredaksi password & token;
   client `src/lib/campus/*` tidak menulis token ke log.
+- **`campus_data` plaintext non-rahasia** — rekap presensi & info kampus disimpan
+  tanpa enkripsi (data mahasiswa sendiri, mirip courses/grades); token tetap
+  terenkripsi seperti di atas.
 - **Rate limiting** — login kampus & reconnect HE-BAT dibatasi 5 percobaan / 5 menit
   dengan lockout 15 menit (`checkRateLimit`), mencegah brute force.
 - **Anti-enumerasi** — semua kegagalan login kampus (401/404/422) dikembalikan

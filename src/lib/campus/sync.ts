@@ -6,8 +6,10 @@
 //  - courses + class_schedules : /akademik/jadwal-kuliah (KK)
 //  - grades                     : /akademik/semester-khs + /kemahasiswaan/riwayat-khs (KK)
 //  - tasks                      : feed iCal HE-BAT (authtoken, tanpa sesi)
-//  - presensi-kuliah KK TIDAK disync: datanya agregat per MK tanpa tanggal,
-//    tidak bisa dipetakan ke baris attendance (tetap dicatat manual).
+//  - campus_data                : rekap presensi (agregat per MK) + info kampus
+//    (pembayaran, dosen wali, masa studi, SKS, HER, KTM, kalender akademik).
+//    Presensi TIDAK dipetakan ke baris attendance — datanya agregat tanpa
+//    tanggal, catatan per tanggal tetap manual.
 //
 // Token dienkripsi at-rest (AES-256-GCM, kunci dari SESSION_SECRET) — lihat
 // src/lib/crypto/at-rest.ts. Password tidak pernah tersimpan.
@@ -16,6 +18,7 @@ import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { db } from "@/lib/db";
 import {
   campusAccounts,
+  campusData,
   classSchedules,
   courses,
   grades,
@@ -23,12 +26,13 @@ import {
   tasks,
   userSettings,
 } from "@/lib/db";
+import type { CampusDataJenis } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { decryptText, encryptText } from "@/lib/crypto/at-rest";
 import { sendPushToUser } from "@/lib/notifications/web-push";
 import { KampusKitaClient } from "./kampuskita";
 import { fetchIcs, parseIcs } from "./hebat";
-import { jadwalToSchedules, khsToGrades, icsToTask } from "./mappings";
+import { jadwalToSchedules, khsToGrades, icsToTask, presensiToRecap } from "./mappings";
 
 const SYNC_INTERVAL_MIN = Number(process.env.FORFH_SYNC_INTERVAL_MIN || 30);
 const MAX_KHS_SEMESTERS = 6;
@@ -40,6 +44,7 @@ export interface CampusSyncSummary {
   tasks: number;
   newTasks: number;
   grades: number;
+  campusData: number; // jumlah jenis info kampus/rekap yang berhasil di-update
 }
 
 // Tabel sasaran memakai kolom bersama user_id / external_id / id / updated_at.
@@ -64,6 +69,21 @@ async function upsertByExternal<T extends { id: string }>(
   return ({ ...values, id } as unknown) as T;
 }
 
+// campusData tidak punya external_id — upsert by (user_id, jenis).
+// Tetap dijalankan saat rows kosong ([]) agar UI bisa membedakan
+// "sudah sync tapi kosong" vs "belum pernah sync".
+async function upsertCampusData(userId: string, jenis: CampusDataJenis, rows: unknown[]): Promise<void> {
+  const existing = await db.select().from(campusData).where(
+    and(eq(campusData.userId, userId), eq(campusData.jenis, jenis))
+  ).limit(1).then((rows_) => rows_[0]);
+  const dataJson = JSON.stringify(rows);
+  if (existing) {
+    await db.update(campusData).set({ dataJson, updatedAt: new Date() }).where(eq(campusData.id, existing.id));
+  } else {
+    await db.insert(campusData).values({ id: crypto.randomUUID(), userId, jenis, dataJson });
+  }
+}
+
 async function findAccount(userId: string) {
   const acc = await db.query.campusAccounts.findFirst({
     where: eq(campusAccounts.userId, userId),
@@ -83,7 +103,7 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
   if (!opts.force && acc.lastSyncAt) {
     const elapsedMin = (Date.now() - acc.lastSyncAt.getTime()) / 60000;
     if (elapsedMin < SYNC_INTERVAL_MIN) {
-      return { skipped: true, courses: 0, schedules: 0, tasks: 0, newTasks: 0, grades: 0 };
+      return { skipped: true, courses: 0, schedules: 0, tasks: 0, newTasks: 0, grades: 0, campusData: 0 };
     }
   }
 
@@ -103,6 +123,18 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
   }
 
   const client = new KampusKitaClient(jwt);
+
+  // Rekap presensi + info kampus: semua GET, paralel dengan fetch utama.
+  const campusFetchers: { jenis: CampusDataJenis; fetch: () => Promise<Record<string, unknown>[]> }[] = [
+    { jenis: "presensi", fetch: () => client.presensi() },
+    { jenis: "pembayaran", fetch: () => client.pembayaran() },
+    { jenis: "dosen_wali", fetch: () => client.dosenWali() },
+    { jenis: "masa_studi", fetch: () => client.masaStudi() },
+    { jenis: "sks_aktif", fetch: () => client.sksAktif() },
+    { jenis: "hist_her", fetch: () => client.histHer() },
+    { jenis: "penyerahan_ktm", fetch: () => client.penyerahanKtm() },
+    { jenis: "kalender_akademik", fetch: () => client.kalenderAkademik() },
+  ];
 
   // --- fetch paralel ---------------------------------------------------------
   const [jadwalRows, semRows, icsText] = await Promise.all([
@@ -243,6 +275,19 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     }
   }
 
+  // --- upsert campus_data: rekap presensi + info kampus (toleran per jenis) ----
+  let campusDataCount = 0;
+  await Promise.all(campusFetchers.map(async ({ jenis, fetch }) => {
+    try {
+      const rows = await fetch();
+      const stored = jenis === "presensi" ? presensiToRecap(rows) : rows;
+      await upsertCampusData(userId, jenis, stored);
+      campusDataCount++;
+    } catch (e: any) {
+      logger.warn(`sync ${userId}: info ${jenis} gagal: ${e?.message || e}`);
+    }
+  }));
+
   // --- status akhir -------------------------------------------------------------
   const summary: CampusSyncSummary = {
     skipped: false,
@@ -251,11 +296,12 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     tasks: taskCount,
     newTasks,
     grades: gradeCount,
+    campusData: campusDataCount,
   };
   await db.update(campusAccounts).set({
     lastSyncAt: new Date(),
     lastSyncStatus: "ok",
-    lastSyncSummary: `${taskCount} tugas · ${scheduleCount} jadwal · ${gradeCount} nilai · ${courseCount} MK`,
+    lastSyncSummary: `${taskCount} tugas · ${scheduleCount} jadwal · ${gradeCount} nilai · ${courseCount} MK · ${campusDataCount} info`,
     lastSyncError: null,
     updatedAt: new Date(),
   }).where(eq(campusAccounts.userId, userId));

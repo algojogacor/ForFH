@@ -15,7 +15,7 @@
 | **AI Reliability Layer** | ✅ PASS | Round-robin multi-slot Groq/Ollama router with circuit breaker & single-repair guard. |
 | **Scheduled Reminders** | ✅ PASS | Fail-closed Upstash QStash signature verification & delivery deduplication. |
 | **Offline Multi-User** | ✅ PASS | User-scoped IndexedDB instances (`forfh-user-${userId}-v2`) with logout pruning. |
-| **Campus Sync (Kampus Kita + HE-BAT)** | ✅ PASS | Login email kampus UNAIR → sync otomatis jadwal/kursus, KHS (nilai), dan tugas HE-BAT via iCal. Token terenkripsi at-rest (AES-256-GCM). Cron tick di `internal/reminders/process`. |
+| **Campus Sync (Kampus Kita + HE-BAT)** | ✅ PASS | Login email kampus UNAIR → sync otomatis jadwal/kursus, KHS (nilai), tugas HE-BAT via iCal, rekap presensi + info kampus (8 jenis: pembayaran, dosen wali, masa studi, SKS, HER, KTM, kalender akademik). Token terenkripsi at-rest (AES-256-GCM). Cron tick di `internal/reminders/process`. |
 
 ---
 
@@ -27,9 +27,9 @@
 - **Google Drive Storage & Upload Sanitization Tests**: 8 passed (Filename sanitization, path traversal slashes stripping, executable payload `.exe`/`.bat`/`.sh` rejection, length boundary checks).
 - **Pasal.id Legal API & FRBR URI Tests**: 4 passed (URI normalization, leading slash stripping, whitespace trimming, standardized error messaging).
 - **Reminder Windows & Notification Deduplication Tests**: 7 passed (Indonesian date formatting, relative countdown overdue calculation, deduplication key uniqueness).
-- **Campus Sync Tests**: 45 passed (enkripsi at-rest roundtrip & mask email, parse iCal fixture nyata HE-BAT dengan folded line, pemetaan waktu/hari/grade point, iCal → tugas (UID → external_id, kode MK dari CATEGORIES), jadwal-kuliah KK → schedules, riwayat KHS → grades).
+- **Campus Sync Tests**: 54 passed (enkripsi at-rest roundtrip & mask email, parse iCal fixture nyata HE-BAT dengan folded line, pemetaan waktu/hari/grade point, iCal → tugas (UID → external_id, kode MK dari CATEGORIES), jadwal-kuliah KK → schedules, riwayat KHS → grades, presensi-kuliah KK → rekap per MK, daftar jenis campus_data).
 
-**Total Results: 94 PASSED, 0 FAILED**
+**Total Results: 103 PASSED, 0 FAILED**
 
 ---
 

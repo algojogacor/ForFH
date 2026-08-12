@@ -464,6 +464,46 @@ export const grades = sqliteTable(
 );
 
 // ----------------------------------------------------
+// 5b. Campus data (rekap & info kampus dari Kampus Kita)
+// ----------------------------------------------------
+// Satu baris per (user, jenis). data_json = JSON.stringify baris hasil sync:
+// jenis "presensi" = hasil presensiToRecap (agregat per MK), lainnya = baris
+// mentah rowsFrom. Data bukan rahasia (mirip courses/grades), disimpan
+// plaintext; token kampus tetap terenkripsi.
+export const CAMPUS_DATA_JENIS = [
+  "presensi",
+  "pembayaran",
+  "dosen_wali",
+  "masa_studi",
+  "sks_aktif",
+  "hist_her",
+  "penyerahan_ktm",
+  "kalender_akademik",
+] as const;
+export type CampusDataJenis = (typeof CAMPUS_DATA_JENIS)[number];
+
+export const campusData = sqliteTable(
+  "campus_data",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    jenis: text("jenis").notNull(), // CAMPUS_DATA_JENIS
+    dataJson: text("data_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(strftime('%s', 'now') * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(strftime('%s', 'now') * 1000)`),
+  },
+  (table) => ({
+    userJenisIdx: uniqueIndex("campus_data_user_jenis_idx").on(table.userId, table.jenis),
+  })
+);
+
+// ----------------------------------------------------
 // 6. Files & Google Drive Storage
 // ----------------------------------------------------
 export const files = sqliteTable(
@@ -634,6 +674,11 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   files: many(files),
   pushSubscriptions: many(pushSubscriptions),
   legalBookmarks: many(legalBookmarks),
+  campusData: many(campusData),
+}));
+
+export const campusDataRelations = relations(campusData, ({ one }) => ({
+  user: one(users, { fields: [campusData.userId], references: [users.id] }),
 }));
 
 export const coursesRelations = relations(courses, ({ one, many }) => ({

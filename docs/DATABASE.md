@@ -11,7 +11,7 @@ ForFH utilizes **Turso (LibSQL)** for distributed SQLite database performance at
 
 ---
 
-## 2. Schema Architecture (22 Tables)
+## 2. Schema Architecture (23 Tables)
 
 ### 2.1 Core Identity & Security
 1. **`users`**: Core user accounts.
@@ -46,23 +46,25 @@ ForFH utilizes **Turso (LibSQL)** for distributed SQLite database performance at
     - `id` (PK), `user_id` (FK), `course_id` (FK), `class_date`, `status` (PRESENT / ABSENT / PERMIT / SICK), `notes`, `created_at`.
 15. **`grades`**: Academic evaluation components (Tugas, UTS, UAS, Quiz).
     - `id` (PK), `user_id` (FK), `course_id` (FK), `component_name`, `weight`, `score`, `letter_grade`, `grade_point`, `created_at`, `updated_at`.
+16. **`campus_data`**: Synced recap & campus info from Kampus Kita, one row per `(user_id, jenis)` — plaintext JSON (non-secret; tokens stay encrypted).
+    - `id` (PK), `user_id` (FK), `jenis` (presensi / pembayaran / dosen_wali / masa_studi / sks_aktif / hist_her / penyerahan_ktm / kalender_akademik), `data_json`, `created_at`, `updated_at`; unique `(user_id, jenis)`.
 
 ### 2.3 Legal Vault & File Storage
-16. **`legal_bookmarks`**: Saved statutes and court decisions from Pasal.id.
+17. **`legal_bookmarks`**: Saved statutes and court decisions from Pasal.id.
     - `id` (PK), `user_id` (FK), `course_id` (FK), `frbr_uri`, `title`, `type`, `number`, `year`, `user_note`, `created_at`.
-17. **`files`**: Google Drive metadata registry.
+18. **`files`**: Google Drive metadata registry.
     - `id` (PK), `user_id` (FK), `course_id` (FK), `drive_file_id`, `drive_parent_folder_id`, `name`, `mime_type`, `size_bytes`, `category`, `drive_web_view_link`, `created_at`.
 
 ### 2.4 Notifications, AI & System Auditing
-18. **`push_subscriptions`**: Web Push VAPID endpoints.
+19. **`push_subscriptions`**: Web Push VAPID endpoints.
     - `id` (PK), `user_id` (FK), `endpoint`, `p256dh`, `auth`, `created_at`, `last_used_at`.
-19. **`notification_deliveries`**: Reminder deduplication log.
+20. **`notification_deliveries`**: Reminder deduplication log.
     - `id` (PK), `user_id` (FK), `entity_type`, `entity_id`, `occurrence_at`, `offset_minutes`, `channel`, `status`, `sent_at`.
-20. **`ai_usage`**: AI provider audit ledger (tokens, latencies, HTTP statuses).
+21. **`ai_usage`**: AI provider audit ledger (tokens, latencies, HTTP statuses).
     - `id` (PK), `user_id` (FK), `provider`, `account_slot`, `model`, `request_type`, `status`, `http_status`, `input_tokens`, `output_tokens`, `latency_ms`, `error_class`, `created_at`.
-21. **`app_config`**: Server-wide configuration parameters (e.g. root drive folder id).
+22. **`app_config`**: Server-wide configuration parameters (e.g. root drive folder id).
     - `key` (TEXT PK), `value` (TEXT), `updated_at`.
-22. **`system_audit_log`**: Security event ledger.
+23. **`system_audit_log`**: Security event ledger.
     - `id` (PK), `user_id` (FK), `action`, `entity_type`, `entity_id`, `ip_address`, `details`, `created_at`.
 
 ---

@@ -16,6 +16,7 @@ import {
   Award,
   FolderLock,
   Settings,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +36,7 @@ const NAV_GROUPS = [
       { href: "/catatan", label: "Catatan", icon: FileText },
       { href: "/bacaan", label: "Bahan Bacaan", icon: BookOpen },
       { href: "/ujian", label: "Jadwal Ujian", icon: Clock },
+      { href: "/info-kampus", label: "Info Kampus", icon: Building2 },
     ],
   },
   {

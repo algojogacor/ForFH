@@ -15,6 +15,13 @@
       "when": 1786513486413,
       "tag": "0001_icy_impossible_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786521201973,
+      "tag": "0002_lush_crystal",
+      "breakpoints": true
     }
   ]
 }

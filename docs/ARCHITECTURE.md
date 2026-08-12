@@ -48,12 +48,13 @@ graph TD
 - **Rate Limiting**: Database-backed sliding window rate limiting pada `/api/auth/login` (kampus) & `/api/campus/hebat` (5 attempts / 5 mins, 15 min lockout).
 
 ### 2.7 Campus Sync Layer (Kampus Kita + HE-BAT)
-- **`src/lib/campus/kampuskita.ts`** — client API Kampus Kita (JWT via header `Set-Cookie token=`, auth `Bearer` + `?token=`): `jadwal()`, `presensi()`, `semesters()`, `khs(id)`, `status()`, `pesertaMataKuliah()`, `kalenderAkademik()`.
+- **`src/lib/campus/kampuskita.ts`** — client API Kampus Kita (JWT via header `Set-Cookie token=`, auth `Bearer` + `?token=`): `jadwal()`, `presensi()`, `semesters()`, `khs(id)`, `status()`, `pesertaMataKuliah()`, `kalenderAkademik()`, `pembayaran()`, `dosenWali()`, `masaStudi()`, `sksAktif()`, `histHer()`, `penyerahanKtm()`.
 - **`src/lib/campus/hebat.ts`** — login form Moodle standar (logintoken CSRF) sekali saat connect → scrape `#calendarexporturl` → simpan `authtoken` terenkripsi. Sync berikutnya pakai `export_execute.php?authtoken=...` tanpa sesi; `parseIcs` mengurai iCal.
-- **`src/lib/campus/mappings.ts`** — pemetaan murni (iCal → tasks, jadwal KK → courses/class_schedules, KHS → grades) dengan konvensi field UPPERCASE_SNAKE; deterministic & diuji.
-- **`src/lib/campus/sync.ts`** — `runCampusSync(userId, {force})` idempoten: upsert by `external_id` (UID iCal / kode MK), link course by kode, notifikasi push untuk tugas baru (dedupe `notification_deliveries` offset 0), throttle 30 menit (`FORFH_SYNC_INTERVAL_MIN`).
+- **`src/lib/campus/mappings.ts`** — pemetaan murni (iCal → tasks, jadwal KK → courses/class_schedules, KHS → grades, presensi KK → rekap per MK) dengan konvensi field UPPERCASE_SNAKE; deterministic & diuji.
+- **`src/lib/campus/sync.ts`** — `runCampusSync(userId, {force})` idempoten: upsert by `external_id` (UID iCal / kode MK), link course by kode, notifikasi push untuk tugas baru (dedupe `notification_deliveries` offset 0), throttle 30 menit (`FORFH_SYNC_INTERVAL_MIN`). Selain itu meng-upsert **`campus_data`** (8 jenis, toleran per jenis): rekap presensi (agregat per MK) + pembayaran, dosen wali, masa studi, SKS aktif, HER, KTM, kalender akademik.
+- **`src/app/api/campus/info/route.ts`** — GET read-only seluruh `campus_data` user (`{connected, lastSyncAt, items:[{jenis, data, updatedAt}]}`); halaman `/info-kampus` menampilkannya, halaman `/kehadiran` memfilter jenis `presensi`.
 - **Cron**: tick `syncDueUsers()` berjalan di webhook QStash `internal/reminders/process` yang sama (tanpa jadwal baru), per-user try/catch, cap 20 user/tick.
-- **Presensi KK tidak disinkronkan**: data agregat per MK tanpa tanggal tidak bisa dipetakan ke baris `attendance`; dicatat manual di halaman Kehadiran.
+- **Presensi KK disinkronkan sebagai rekap agregat** (`campus_data`, jenis `presensi`); tidak dipetakan ke baris `attendance` (tetap manual per tanggal di halaman Kehadiran).
 - **Token terenkripsi at-rest**: AES-256-GCM (kunci HKDF dari `SESSION_SECRET`) — lihat `docs/SECURITY.md` §0.
 
 ### 2.4 AI Routing & Graceful Degradation

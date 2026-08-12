@@ -271,6 +271,16 @@ export async function initializeDatabaseSchema() {
     `CREATE INDEX IF NOT EXISTS grades_course_id_idx ON grades(course_id);`,
     `CREATE INDEX IF NOT EXISTS grades_user_external_idx ON grades(user_id, external_id);`,
 
+    `CREATE TABLE IF NOT EXISTS campus_data (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      jenis TEXT NOT NULL,
+      data_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    );`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS campus_data_user_jenis_idx ON campus_data(user_id, jenis);`,
+
     `CREATE TABLE IF NOT EXISTS files (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

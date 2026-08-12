@@ -39,7 +39,7 @@ export default function SettingsPage() {
       const res = await fetch("/api/campus/sync", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
-        success(`Sinkronisasi selesai: ${data.summary.tasks} tugas, ${data.summary.schedules} jadwal, ${data.summary.grades} nilai.`);
+        success(`Sinkronisasi selesai: ${data.summary.tasks} tugas, ${data.summary.schedules} jadwal, ${data.summary.grades} nilai, ${data.summary.campusData} info.`);
       } else {
         toast(data.error || "Sinkronisasi gagal.");
       }
@@ -308,8 +308,9 @@ export default function SettingsPage() {
                 </div>
 
                 <p className="text-muted-foreground">
-                  Sinkron otomatis tiap 30 menit. Presensi Kampus Kita bersifat agregat per
-                  mata kuliah sehingga tidak disinkronkan — dicatat manual di Kehadiran.
+                  Sinkron otomatis tiap 30 menit. Rekap presensi Kampus Kita (agregat per
+                  mata kuliah) dan data Info Kampus ikut tersinkron; presensi per tanggal
+                  tetap dicatat manual di Kehadiran.
                 </p>
               </>
             )}

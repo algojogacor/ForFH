@@ -160,4 +160,34 @@ export class KampusKitaClient {
   async kalenderAkademik(): Promise<Record<string, unknown>[]> {
     return rowsFrom(await this.get("/akademik/kalender-akademik"));
   }
+
+  // Riwayat pembayaran (tagihan & status bayar)
+  async pembayaran(): Promise<Record<string, unknown>[]> {
+    return rowsFrom(await this.get("/kemahasiswaan/pembayaran"));
+  }
+
+  // Dosen wali semester berjalan
+  async dosenWali(): Promise<Record<string, unknown>[]> {
+    return rowsFrom(await this.get("/akademik/dosen-wali"));
+  }
+
+  // Masa studi (mulai, batas, sisa semester)
+  async masaStudi(): Promise<Record<string, unknown>[]> {
+    return rowsFrom(await this.get("/akademik/masa-studi"));
+  }
+
+  // SKS aktif semester berjalan
+  async sksAktif(): Promise<Record<string, unknown>[]> {
+    return rowsFrom(await this.get("/akademik/sks-aktif"));
+  }
+
+  // Riwayat HER (nilai perbaikan)
+  async histHer(): Promise<Record<string, unknown>[]> {
+    return rowsFrom(await this.get("/kemahasiswaan/hist-her"));
+  }
+
+  // Riwayat penyerahan KTM
+  async penyerahanKtm(): Promise<Record<string, unknown>[]> {
+    return rowsFrom(await this.get("/kemahasiswaan/penyerahan-ktm"));
+  }
 }

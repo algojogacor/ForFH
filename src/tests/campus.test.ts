@@ -12,7 +12,9 @@ import {
   icsToTask,
   jadwalToSchedules,
   khsToGrades,
+  presensiToRecap,
 } from "../lib/campus/mappings";
+import { CAMPUS_DATA_JENIS } from "../lib/db/schema";
 
 // Fixture iCal nyata dari kalender HE-BAT (2 event: tugas Assessment HAM +
 // event tambahan), bidang folded line agar parser diuji juga.
@@ -117,4 +119,24 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
   assert(grades[0].score === 87 && grades[0].letterGrade === "A" && grades[0].gradePoint === 4, "skor + huruf + poin");
   assert(grades[0].externalId === "S20261|FHK25601032", "externalId semester|kode");
   assert(grades[1].score === null && grades[1].gradePoint === 3, "nilai kosong -> score null, poin tetap");
+
+  console.log("  ── Campus sync (presensi-kuliah KK -> rekap) ──");
+  const presensi = [
+    { KD_MATA_KULIAH: "FHK25601032", NM_MATA_KULIAH: "Hak Asasi Manusia", TOTAL_TM: "14", JML_HADIR: "13", PERSEN: "93" },
+    { kode_mk: "FHK25601033", nama_mk: "Hukum Acara Pidana", TM: "14", HADIR: "7" }, // tanpa PERSEN -> dihitung
+    { KD_MATA_KULIAH: "FHK25601034", NM_MATA_KULIAH: "Metode Penelitian Hukum" }, // tanpa angka -> null
+    { NM_JADWAL_HARI: "Senin" }, // tanpa kode/nama -> dilewati
+  ];
+  const recaps = presensiToRecap(presensi as any);
+  assert(recaps.length === 3, "baris tanpa kode/nama dilewati");
+  assert(recaps[0].code === "FHK25601032" && recaps[0].name === "Hak Asasi Manusia", "kode+nama ter-parse");
+  assert(recaps[0].tm === 14 && recaps[0].hadir === 13 && recaps[0].persen === 93, "TM/hadir/persen lengkap");
+  assert(recaps[1].persen === Math.round((7 / 14) * 100), "persen dihitung dari tm/hadir bila tidak ada");
+  assert(recaps[1].persen === 50, "perhitungan dibulatkan (7/14 -> 50)");
+  assert(recaps[2].tm === null && recaps[2].hadir === null && recaps[2].persen === null, "tanpa angka -> null");
+
+  console.log("  ── Campus sync (jenis campus_data) ──");
+  assert(CAMPUS_DATA_JENIS.length === 8, "8 jenis data kampus terdaftar");
+  assert(new Set(CAMPUS_DATA_JENIS).size === 8, "jenis tidak duplikat");
+  assert(CAMPUS_DATA_JENIS.includes("presensi") && CAMPUS_DATA_JENIS.includes("pembayaran"), "presensi + pembayaran terdaftar");
 }

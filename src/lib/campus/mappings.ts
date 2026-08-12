@@ -164,6 +164,41 @@ export function khsToGrades(rows: Record<string, unknown>[], semesterLabel: stri
   return out;
 }
 
+// ---- presensi-kuliah -> rekap per MK ---------------------------------------
+
+export interface CourseRecap {
+  code: string;
+  name: string;
+  tm: number | null; // total pertemuan (minggu)
+  hadir: number | null; // jumlah hadir
+  persen: number | null; // persentase hadir 0–100 (server atau hasil hitung)
+}
+
+function toNumber(v: string): number | null {
+  if (v.trim() === "") return null; // Number("") === 0, bukan null
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Data presensi KK agregat per MK (tanpa tanggal) — dipakai untuk rekap
+// otomatis; catatan per tanggal tetap manual di tabel attendance.
+export function presensiToRecap(rows: Record<string, unknown>[]): CourseRecap[] {
+  const out: CourseRecap[] = [];
+  for (const r of rows) {
+    const code = pick(r, ["KD_MATA_KULIAH", "KODE_MK", "KODE", "kode_mk"]);
+    const name = pick(r, ["NM_MATA_KULIAH", "NAMA_MK", "NAMA", "nama_mk"]);
+    if (!code && !name) continue;
+    const tm = toNumber(pick(r, ["TOTAL_TM", "TOTAL_PERTEMUAN", "JUMLAH_TM", "TM"]));
+    const hadir = toNumber(pick(r, ["JML_HADIR", "TOTAL_HADIR", "JUMLAH_HADIR", "HADIR"]));
+    let persen = toNumber(pick(r, ["PERSEN", "PERSENTASE", "PERSEN_HADIR"]));
+    if (persen === null && tm && hadir !== null) {
+      persen = Math.min(100, Math.max(0, Math.round((hadir / tm) * 100)));
+    }
+    out.push({ code, name, tm, hadir, persen });
+  }
+  return out;
+}
+
 // ---- guard kelas (praktik kk_lite) -----------------------------------------
 // Untuk tugas iCal: kalau CATEGORIES mengandung kelas (mis. "C-2"), hanya
 // tampilkan kalau cocok dengan kelas kursus ForFH. Kode MK adalah penanda utama.

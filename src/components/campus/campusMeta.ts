@@ -1,0 +1,117 @@
+// Metadata jenis data kampus untuk UI Info Kampus. Client-safe: hanya tipe
+// yang diimpor dari server (type-only, hilang saat kompilasi).
+import type { LucideIcon } from "lucide-react";
+import {
+  CalendarDays,
+  ClipboardCheck,
+  CreditCard,
+  History,
+  Hourglass,
+  IdCard,
+  Layers,
+  UserRound,
+} from "lucide-react";
+import type { CampusDataJenis } from "@/lib/db";
+
+export interface CampusJenisMeta {
+  jenis: CampusDataJenis;
+  title: string;
+  description: string;
+  icon: LucideIcon;
+}
+
+// Urutan tampilan di halaman Info Kampus
+export const CAMPUS_JENIS_META: CampusJenisMeta[] = [
+  { jenis: "presensi", title: "Rekap Kehadiran", description: "Agregat kehadiran per mata kuliah dari Kampus Kita.", icon: ClipboardCheck },
+  { jenis: "kalender_akademik", title: "Kalender Akademik", description: "Tanggal penting semester berjalan.", icon: CalendarDays },
+  { jenis: "dosen_wali", title: "Dosen Wali", description: "Dosen wali semester berjalan.", icon: UserRound },
+  { jenis: "masa_studi", title: "Masa Studi", description: "Masa studi dan sisa waktu tempuh.", icon: Hourglass },
+  { jenis: "sks_aktif", title: "SKS Aktif", description: "Beban SKS semester berjalan.", icon: Layers },
+  { jenis: "hist_her", title: "Riwayat HER", description: "Nilai perbaikan (HER) yang pernah diambil.", icon: History },
+  { jenis: "penyerahan_ktm", title: "Penyerahan KTM", description: "Riwayat pengambilan kartu mahasiswa.", icon: IdCard },
+  { jenis: "pembayaran", title: "Pembayaran", description: "Riwayat tagihan dan pembayaran.", icon: CreditCard },
+];
+
+// Label Indonesia untuk kunci field UPPERCASE_SNAKE dari Kampus Kita.
+// Kunci yang tidak dikenal tetap ditampilkan apa adanya (bukan label).
+export const CAMPUS_FIELD_LABELS: Record<string, string> = {
+  NIM: "NIM",
+  NIM_MHS: "NIM",
+  NAMA: "Nama",
+  NAMA_MHS: "Nama",
+  NM_PENGGUNA: "Nama",
+  NM_MATA_KULIAH: "Nama MK",
+  NAMA_MK: "Nama MK",
+  KD_MATA_KULIAH: "Kode MK",
+  KODE: "Kode",
+  KODE_MK: "Kode MK",
+  SKS: "SKS",
+  KREDIT_SEMESTER: "SKS",
+  NAMA_KELAS: "Kelas",
+  KELAS: "Kelas",
+  NM_DOSEN: "Dosen",
+  DOSEN: "Dosen",
+  DOSEN_WALI: "Dosen Wali",
+  NILAI_HURUF: "Nilai",
+  NILAI: "Skor",
+  NILAI_ANGKA: "Skor",
+  ID_SEMESTER: "Semester",
+  SEMESTER: "Semester",
+  TAHUN_AJARAN: "Tahun Ajaran",
+  NM_SEMESTER: "Periode",
+  NM_PROGRAM_STUDI: "Prodi",
+  PRODI: "Prodi",
+  JENJANG: "Jenjang",
+  FAKULTAS: "Fakultas",
+  JUM_MK: "Jumlah MK",
+  SKS_TEMPUH: "SKS Tempuh",
+  TANGGAL: "Tanggal",
+  TGL: "Tanggal",
+  TANGGAL_AWAL: "Tanggal Awal",
+  TANGGAL_AKHIR: "Tanggal Akhir",
+  MULAI: "Mulai",
+  SELESAI: "Selesai",
+  AWAL: "Awal",
+  AKHIR: "Akhir",
+  BERLAKU: "Berlaku",
+  HARI: "Hari",
+  JAM: "Jam",
+  RUANGAN: "Ruangan",
+  NM_RUANGAN: "Ruangan",
+  STATUS: "Status",
+  KET: "Keterangan",
+  KETERANGAN: "Keterangan",
+  URAIAN: "Uraian",
+  NOMINAL: "Nominal",
+  JUMLAH: "Jumlah",
+  PERIODE: "Periode",
+  BULAN: "Bulan",
+  TAHUN: "Tahun",
+  KEGIATAN: "Kegiatan",
+  AGENDA: "Agenda",
+  NM_KEGIATAN: "Kegiatan",
+  TGL_MULAI: "Tanggal Mulai",
+  TGL_MULAI_JSF: "Tanggal Mulai",
+  TGL_SELESAI: "Tanggal Selesai",
+  TGL_SELESAI_JSF: "Tanggal Selesai",
+  TGL_BAYAR: "Tanggal Bayar",
+  NOMINAL_BAYAR: "Nominal Dibayar",
+  NAMA_STATUS: "Status",
+  NM_BANK: "Bank",
+  LAMA_STUDI: "Lama Studi",
+  NO_UJIAN: "No. Ujian",
+  TGL_VERIFIKASI_PENDIDIKAN: "Tgl Verifikasi",
+  TGL_UPDATE_HER: "Tgl Update HER",
+  NAMA_DOSEN: "Nama Dosen",
+  NIP_DOSEN: "NIP",
+  NIDN_DOSEN: "NIDN",
+  EMAIL: "Email",
+  BIOGRAFI: "Biografi",
+  ID_SINTA: "ID SINTA",
+  ID_SCOPUS: "ID Scopus",
+  ID_FACEBOOK: "ID Facebook",
+  ID_TWITTER: "ID Twitter",
+  JML_HADIR: "Hadir",
+  TOTAL_TM: "Total TM",
+  PERSEN: "Persen",
+};
