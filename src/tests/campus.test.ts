@@ -9,6 +9,7 @@ import {
   gradePointFromLetter,
   courseFromCategories,
   titleFromSummary,
+  descriptionToText,
   icsToTask,
   jadwalToSchedules,
   khsToGrades,
@@ -92,6 +93,35 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
   assert(task.courseName === "Hak Asasi Manusia", "nama MK dari CATEGORIES");
   assert(courseFromCategories(undefined).code === "", "CATEGORIES kosong -> tanpa kode");
   assert(titleFromSummary("UAS is due") === "UAS", "titleFromSummary membersihkan suffix");
+
+  console.log("  ── Campus sync (descriptionToText) ──");
+  assert(
+    descriptionToText("<p>Tugas 1: Baca bab 3</p><p>Kumpul Jumat.</p>") ===
+      "Tugas 1: Baca bab 3\nKumpul Jumat.",
+    "tag </p> jadi baris baru"
+  );
+  assert(
+    descriptionToText("Baris 1<br>Baris 2<br/>Baris 3<br />X") === "Baris 1\nBaris 2\nBaris 3\nX",
+    "varian <br> jadi newline"
+  );
+  assert(
+    descriptionToText("A &amp; B &lt;C&gt; &quot;D&quot; &nbsp;E") === 'A & B <C> "D" E',
+    "entity HTML didecode"
+  );
+  assert(descriptionToText("  Instruksi sederhana.  ") === "Instruksi sederhana.", "teks polos di-trim");
+  assert(descriptionToText("") === "" && descriptionToText(undefined) === "", "kosong/undefined -> kosong");
+  assert(descriptionToText("   \n ") === "", "whitespace saja -> kosong");
+  assert(descriptionToText("A\n\n\n\nB") === "A\nB", "baris kosong ganda dipadatkan");
+  assert(descriptionToText("a  b   c") === "a b c", "spasi ganda dipadatkan");
+  const longDesc = "x".repeat(2000);
+  assert(descriptionToText(longDesc) === longDesc, "deskripsi panjang tidak dipotong (tanpa cap)");
+  const htmlTask = icsToTask({
+    UID: "x",
+    SUMMARY: "Tugas X is due",
+    DTSTART: "20260814T050000Z",
+    DESCRIPTION: "<p>Instruksi <b>ber-html</b>.</p><br>Baris 2",
+  });
+  assert(htmlTask.description === "Instruksi ber-html.\nBaris 2", "icsToTask membersihkan HTML");
 
   console.log("  ── Campus sync (jadwal-kuliah KK) ──");
   const jadwal = [

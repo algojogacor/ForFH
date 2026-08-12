@@ -69,12 +69,46 @@ export function titleFromSummary(summary: string | undefined): string {
   return s.replace(/ is due\s*$/i, "").trim() || "Tugas";
 }
 
+// DESCRIPTION iCal sering berisi HTML dari Moodle (<p>, <br>, entity HTML).
+// Bersihkan menjadi teks polos: tag penutup/br jadi baris baru, tag lain
+// dibuang, entity didecode. Murni regex (tanpa DOM) — aman dipakai di test
+// runner yang tidak punya jsdom. Tanpa batas panjang: deskripsi bulat-bulat
+// lewat modal edit, jadi memotong di sini = kehilangan data saat disimpan.
+const HTML_ENTITY_MAP: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&apos;": "'",
+  "&nbsp;": " ",
+};
+
+export function descriptionToText(raw: string | undefined): string {
+  if (!raw) return "";
+  let s = raw
+    .replace(/<br\s*\/?>/gi, "\n") // <br>, <br/>, <br />
+    .replace(/<\/(p|div|li)>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\r\n/g, "\n");
+  // Entity numerik &#d; (ASCII umum; selain itu dibiarkan apa adanya)
+  s = s.replace(/&#(\d+);/g, (_m, code: string) => {
+    const n = Number(code);
+    if (n === 160) return " "; // &nbsp; numerik
+    return n >= 32 && n <= 126 ? String.fromCharCode(n) : _m;
+  });
+  for (const [ent, val] of Object.entries(HTML_ENTITY_MAP)) {
+    s = s.split(ent).join(val);
+  }
+  return s.replace(/\n{2,}/g, "\n").replace(/ {2,}/g, " ").trim();
+}
+
 export function icsToTask(ev: IcsEvent): MappedTask {
   const { code, name } = courseFromCategories(ev.CATEGORIES);
   return {
     externalId: (ev.UID || "").trim() || `ics-${ev.SUMMARY}-${ev.DTSTART}`,
     title: titleFromSummary(ev.SUMMARY),
-    description: (ev.DESCRIPTION || "").trim(),
+    description: descriptionToText(ev.DESCRIPTION),
     dueAt: icsTimestampToMs(ev.DTSTART),
     courseCode: code,
     courseName: name,

@@ -5,6 +5,7 @@ import { Plus, Search, Circle, CheckCircle2, MoreVertical, Edit, Trash2, Chevron
 import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { TaskFormModal } from "@/components/tasks/TaskFormModal";
+import { TaskDescription } from "@/components/tasks/TaskDescription";
 import { SmartDeadlineModal } from "@/components/tasks/SmartDeadlineModal";
 import { useToast } from "@/components/ui/Toast";
 import { formatDateIndonesian } from "@/lib/utils";
@@ -266,6 +267,9 @@ export default function TasksPage() {
                         </>
                       )}
                     </div>
+
+                    {/* Instruksi tugas — komponen menyembunyikan diri bila kosong */}
+                    <TaskDescription description={task.description} clampLines={2} expandable />
                   </div>
 
                   {/* Desktop Hover Actions & Mobile Popover */}

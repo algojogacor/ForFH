@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Clock, MapPin, Plus } from "lucide-react";
+import { TaskDescription } from "@/components/tasks/TaskDescription";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { formatDateIndonesian, INDONESIAN_MONTHS, INDONESIAN_DAYS } from "@/lib/utils";
@@ -217,6 +218,7 @@ export default function CalendarPage() {
                         <div className="text-[10px] font-mono text-status-warning">
                           Deadline {t.dueAt?.slice(11, 16) || "23:59"}
                         </div>
+                        <TaskDescription description={t.description} clampLines={1} className="text-[10px]" />
                       </div>
                     ))}
 
@@ -277,6 +279,7 @@ export default function CalendarPage() {
                       </div>
                       <div className="font-semibold text-foreground text-sm">{t.title}</div>
                       <div className="text-muted-foreground text-[11px]">{t.course?.name || "Umum"}</div>
+                      <TaskDescription description={t.description} clampLines={2} />
                     </div>
                   ))}
 
