@@ -38,6 +38,7 @@ import {
   icsToTask,
   presensiToRecap,
   instructionFor,
+  instructionCounted,
 } from "./mappings";
 import type { HebatCourseInstructions } from "./mappings";
 
@@ -228,7 +229,9 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     const description = existing
       ? (existing.description || instr || t.description || null)
       : (instr || t.description || null);
-    if (instr) instructionCount++;
+    // Hitung hanya saat instruksi benar-benar dipakai (existing.description
+    // kosong / tugas baru) — edit user tidak menaikkan counter laporan.
+    if (instructionCounted(instr, existing?.description)) instructionCount++;
     const courseId = t.courseCode ? courseIdsByCode.get(t.courseCode) : undefined;
     if (existing) {
       await db.update(tasks).set({

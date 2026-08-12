@@ -1,7 +1,7 @@
 // Tes murni (tanpa DB, tanpa jaringan) untuk lapisan sinkronisasi kampus:
 // enkripsi at-rest, client HE-BAT (parse iCal), dan pemetaan Kampus Kita.
 import { encryptText, decryptText, maskEmail } from "../lib/crypto/at-rest";
-import { parseIcs } from "../lib/campus/hebat";
+import { parseIcs, HebatError, assertCalendarSessionAlive, collectCrawlResults } from "../lib/campus/hebat";
 import {
   icsTimestampToMs,
   normalizeTime,
@@ -16,6 +16,7 @@ import {
   presensiToRecap,
   parseCoursePage,
   instructionFor,
+  instructionCounted,
 } from "../lib/campus/mappings";
 import { CAMPUS_DATA_JENIS } from "../lib/db/schema";
 
@@ -186,8 +187,8 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
     "varian <br> jadi newline"
   );
   assert(
-    descriptionToText("A &amp; B &lt;C&gt; &quot;D&quot; &nbsp;E") === 'A & B <C> "D" E',
-    "entity HTML didecode"
+    descriptionToText("A &amp; B &lt;C&gt; &quot;D&quot; &nbsp;E") === 'A & B "D" E',
+    "entity HTML didecode (tag hasil decode ikut dibuang — &lt;C&gt; jadi <C>, lalu di-strip)"
   );
   assert(descriptionToText("  Instruksi sederhana.  ") === "Instruksi sederhana.", "teks polos di-trim");
   assert(descriptionToText("") === "" && descriptionToText(undefined) === "", "kosong/undefined -> kosong");
@@ -196,6 +197,18 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
   assert(descriptionToText("a  b   c") === "a b c", "spasi ganda dipadatkan");
   assert(descriptionToText("a &amp;lt; b &amp;nbsp; c") === "a &lt; b &nbsp; c", "tanpa decode ganda entity");
   assert(descriptionToText("5 < 10 dan 3 > 1") === "5 < 10 dan 3 > 1", "teks polos < > tidak dibuang");
+  assert(
+    descriptionToText("<!-- [if !supportLists]-->Teks") === "Teks",
+    "komentar HTML (conditional comment Word) dibuang"
+  );
+  assert(
+    descriptionToText("&lt;strong&gt;&lt;i&gt;Penting&lt;/i&gt;&lt;/strong&gt;") === "Penting",
+    "tag double-encoded editor dibuang setelah decode entity (bukan jadi tag literal)"
+  );
+  assert(
+    descriptionToText("<!-- [if !supportLists]--><p>&lt;b&gt;Tugas A&lt;/b&gt; kumpul Jumat.</p>") === "Tugas A kumpul Jumat.",
+    "kombinasi komentar Word + tag double-encoded dibersihkan"
+  );
   assert(
     descriptionToText("Kuis &#8211; Bab 2 &#8220;Hukum&#8221; &#8230;") === "Kuis – Bab 2 “Hukum” …",
     "entity numerik non-ASCII didecode"
@@ -335,6 +348,101 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
     instructionFor([gated], { courseCode: "FHK25601033", courseName: "Bahasa Inggris", title: "Tugas Bahasa" }) === null,
     "courseCode beda: entry shortname FHK25601032 tidak dipakai, fullname fallback dimatikan"
   );
+
+  // #A: hasil crawl difilter — halaman tanpa section (soft-redirect ke login,
+  // HTTP 200) TIDAK masuk array instruksi (meng-upsert entri kosong akan
+  // menimpa instruksi yang sudah bagus); hasil dengan section tetap masuk.
+  const crawlEmpty = parseCoursePage(FIXTURE_NO_SECTION, "90041");
+  const filtered = collectCrawlResults([
+    { status: "fulfilled", value: crawlEmpty },
+    { status: "fulfilled", value: ham },
+  ]);
+  assert(filtered.length === 1 && filtered[0].courseId === "16332", "kursus tanpa section disaring dari hasil crawl");
+  let crawl401 = false;
+  try {
+    collectCrawlResults([{ status: "rejected", reason: new HebatError(401, "Sesi HE-BAT berakhir — hubungkan ulang HE-BAT.") }]);
+  } catch (e) {
+    crawl401 = (e as HebatError).status === 401;
+  }
+  assert(crawl401, "rejection 401 (URL login saat crawl kursus) menghentikan crawl, bukan di-skip");
+  const crawlSkipped = collectCrawlResults([{ status: "rejected", reason: new Error("kursus HTTP 500") }]);
+  assert(crawlSkipped.length === 0, "rejection non-401 di-skip (warn)");
+
+  // #D: guard sesi — URL final /login/index.php sebagai sinyal PRIMER,
+  // substring "logintoken" sekunder (halaman valid bisa memuatnya di JS).
+  let guardUrl = false;
+  try {
+    assertCalendarSessionAlive({ url: "https://hebat.elearning.unair.ac.id/login/index.php", text: "<html>form login</html>" });
+  } catch (e) {
+    guardUrl = (e as HebatError).status === 401;
+  }
+  assert(guardUrl, "guard sesi: URL final /login/index.php -> 401");
+  let guardText = false;
+  try {
+    assertCalendarSessionAlive({ url: "https://hebat.elearning.unair.ac.id/calendar/view.php?view=month", text: '<input type="hidden" name="logintoken" value="xyz">' });
+  } catch (e) {
+    guardText = (e as HebatError).status === 401;
+  }
+  assert(guardText, "guard sesi: substring logintoken di body -> 401");
+  let guardOk = true;
+  try {
+    assertCalendarSessionAlive({ url: "https://hebat.elearning.unair.ac.id/calendar/view.php?view=month", text: "<html>kalender valid</html>" });
+  } catch {
+    guardOk = false;
+  }
+  assert(guardOk, "guard sesi: halaman kalender valid tidak melempar");
+
+  // #B: summarytext dengan div dalam TIDAK ditutup (paste Word) — fallback
+  // memotong di </div> pertama, bukan kehilangan SELURUH summary.
+  const malformed = parseCoursePage(`<html><body>
+<h1>2026Ganjil - FHK25601051 - Hukum Malformed - S1 - Ilmu Hukum</h1>
+<ul class="course-section-list">
+<li id="section-1" class="section course-section main clearfix" data-id="90071" data-number="1" data-sectionname="Sesi 1">
+<div class="summarytext"><p>Bagian 1.</p><div class="x"><p>Bagian 2.</p><p>Bagian 3.</p></div>
+<div class="activity-item focus-control " data-activityname="Tugas Malformed" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`, "90071");
+  assert(malformed.sections[0].summary !== "", "summarytext malformed tidak hilang total");
+  assert(malformed.sections[0].summary.includes("Bagian 2."), "fallback memotong di </div> pertama (teks sebelum penutup dipertahankan)");
+
+  // #B: `</div>` literal di dalam attribute — penutup asli yang dipakai,
+  // bukan literal di atribut (tidak terpotong di tengah attribute).
+  const attrClose = parseCoursePage(`<html><body>
+<h1>2026Ganjil - FHK25601052 - Hukum Atribut - S1 - Ilmu Hukum</h1>
+<ul class="course-section-list">
+<li id="section-1" class="section course-section main clearfix" data-id="90081" data-number="1" data-sectionname="Sesi 1">
+<div class="summarytext"><p data-tip="a</div>b">Isi instruksi lengkap.</p><p>Lanjutan.</p></div>
+<div class="activity-item focus-control " data-activityname="Tugas Atribut" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`, "90081");
+  assert(attrClose.sections[0].summary.includes("data-tip="), "literal </div> di attribute tidak memotong summary di tengah attribute");
+  assert(attrClose.sections[0].summary.includes("Lanjutan."), "teks setelah attribute ikut tertangkap");
+
+  // #E: entity didecode di fullname — "&amp;" tidak tersimpan mentah (fallback
+  // fullname-matching tetap jalan); shortname tidak terpengaruh.
+  const entName = parseCoursePage(`<html><body>
+<h1>2026Ganjil - FHK25601050 - Hak Asasi Manusia &amp; Hukum - S1 - Ilmu Hukum</h1>
+<ul class="course-section-list">
+<li id="section-1" class="section course-section main clearfix" data-id="90061" data-number="1" data-sectionname="Sesi 1">
+<div class="summarytext"><p>Instruksi.</p></div>
+<div class="activity-item focus-control " data-activityname="Tugas HAM" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`, "90061");
+  assert(entName.fullname === "2026Ganjil - FHK25601050 - Hak Asasi Manusia & Hukum - S1 - Ilmu Hukum", "entity &amp; didecode di fullname");
+  assert(entName.shortname === "FHK25601050", "shortname tetap segmen ke-2 (tidak terpengaruh decode)");
+  assert(
+    !!instructionFor([entName], { courseCode: "", courseName: "Hak Asasi Manusia & Hukum", title: "Tugas HAM" }),
+    "fullname ter-decode cocok dengan courseName ber-&"
+  );
+
+  // #C: instructionCounted — counter hanya naik saat instruksi benar-benar dipakai.
+  assert(instructionCounted(null, undefined) === false, "tanpa instr -> tidak dihitung");
+  assert(instructionCounted("instruksi", "Edit user") === false, "existing.description non-kosong (edit user) -> counter tidak naik");
+  assert(instructionCounted("instruksi", "") === true, "existing.description kosong + instr ada -> dihitung");
+  assert(instructionCounted("instruksi", undefined) === true, "tugas baru (tanpa existing) + instr ada -> dihitung");
 
   console.log("  ── Campus sync (jenis campus_data) ──");
   assert(CAMPUS_DATA_JENIS.length === 9, "9 jenis data kampus terdaftar");

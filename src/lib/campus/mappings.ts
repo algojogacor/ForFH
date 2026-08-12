@@ -100,6 +100,7 @@ const ENTITY_MAP: Record<string, string> = {
 export function descriptionToText(raw: string | undefined): string {
   if (!raw) return "";
   const s = raw
+    .replace(/<!--[\s\S]*?-->/g, "") // komentar HTML (conditional comment Word "<!-- [if !supportLists]-->")
     .replace(/<br\s*\/?>/gi, "\n") // <br>, <br/>, <br />
     .replace(/<\/(p|div|li)>/gi, "\n")
     .replace(/<\/?[a-zA-Z][^>]*>/g, "") // tag utuh dibuang; "5 < 10" selamat
@@ -116,7 +117,12 @@ export function descriptionToText(raw: string | undefined): string {
     }
     return m;
   });
-  return decoded.replace(/\n{2,}/g, "\n").replace(/ {2,}/g, " ").trim();
+  return decoded
+    .replace(/<\/?[a-zA-Z][^>]*>/g, "") // tag HASIL decode (konten editor double-encoded "&lt;strong&gt;");
+    // "5 < 10" aman: tanpa '&' tidak ter-decode, dan "< 10" tidak cocok pola huruf
+    .replace(/\n{2,}/g, "\n")
+    .replace(/ {2,}/g, " ")
+    .trim();
 }
 
 export function icsToTask(ev: IcsEvent): MappedTask {
@@ -286,17 +292,34 @@ function decodeBasicEntities(s: string): string {
 function extractSummaryText(block: string): string {
   const open = /<div[^>]*class="[^"]*summarytext[^"]*"[^>]*>/i.exec(block);
   if (!open) return "";
+  const start = open.index + open[0].length;
+  // Fallback non-greedy (perilaku lama): potong di </div> pertama setelah
+  // pembuka. Dipakai saat HTML malformed (paste Word) atau struktur tak
+  // wajar — lebih baik terpotong wajar daripada SELURUH summary hilang.
+  const fallback = /<\/div[^>]*>/i.exec(block.slice(start));
   let depth = 1; // pembuka summarytext ikut dihitung — </div> pertama = penutupnya
-  const tagRe = /<\/?div\b[^>]*>/g;
-  tagRe.lastIndex = open.index + open[0].length;
+  const tagRe = /<\/?div\b[^>]*>/gi;
+  tagRe.lastIndex = start;
   let m: RegExpExecArray | null;
   while ((m = tagRe.exec(block))) {
     const tag = m[0];
-    if (tag.startsWith("</")) depth--;
-    else if (!/\/>$/.test(tag)) depth++; // <div ... /> self-closing diabaikan
-    if (depth === 0) return block.slice(open.index + open[0].length, m.index);
+    if (tag.startsWith("</")) {
+      // `</div>` literal di dalam attribute (mis. data-tip="a</div>b" atau
+      // alt="x</div>") atau teks contoh kode ikut tercocokkan. Tanda: match
+      // "tidak bersih" (ada junk setelah `</div>`, mis. </div>">), ATAU setelah
+      // match masih ada kutip sebelum `>` berikutnya (kutip penutup attribute).
+      // Keduanya bukan penutup div sungguhan — abaikan, lanjut cari penutup asli.
+      if (!/^<\/div\s*>$/i.test(tag)) continue;
+      const after = block.slice(m.index + m[0].length, m.index + m[0].length + 200);
+      if (/^[^<]*"[^>]*>/.test(after) || /^[^<]*'[^>]*>/.test(after)) continue;
+      depth--;
+      if (depth === 0) return block.slice(start, m.index);
+    } else if (!/\/>$/.test(tag)) { // <div ... /> self-closing diabaikan
+      depth++;
+      if (depth > 16) break; // struktur tak wajar (paste Word) — pakai fallback
+    }
   }
-  return ""; // pembuka tanpa penutup (HTML terpotong) — jangan potong blok
+  return fallback ? block.slice(start, start + fallback.index) : ""; // penutup tidak ketemu — potong di </div> pertama
 }
 
 export interface HebatSection {
@@ -318,8 +341,10 @@ export interface HebatCourseInstructions {
 // <li id="section-..."> (blok section; aktivitas <li class="activity"> bukan
 // <li id="section-"> jadi tidak ikut terpotong). Urutan section dipertahankan.
 export function parseCoursePage(html: string, courseId: string): HebatCourseInstructions {
-  // H1 bisa memuat tag inline (<span>) — strip dulu sebelum split segmen
-  const fullname = (/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] || "").replace(/<[^>]+>/g, "").trim();
+  // H1 bisa memuat tag inline (<span>) — strip dulu sebelum split segmen.
+  // Entity didecode supaya "Hukum &amp; Teknologi" tersimpan sebagai
+  // "Hukum & Teknologi" (kalau tidak, fallback fullname-matching gagal).
+  const fullname = decodeBasicEntities((/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] || "").replace(/<[^>]+>/g, "")).trim();
   const shortname = fullname.split(" - ")[1] || "";
   const sections: HebatSection[] = [];
   const marker = '<li id="section-';
@@ -377,4 +402,11 @@ export function instructionFor(
   );
   if (!section || !section.summary) return null;
   return descriptionToText(section.summary);
+}
+
+// Apakah instruksi "benar-benar dipakai" untuk tugas ini (dihitung di laporan
+// sync)? Hanya saat instr ada DAN existing.description kosong — edit user di
+// modal tetap dipertahankan dan tidak melebihkan jumlah instruksi.
+export function instructionCounted(instr: string | null, existingDescription: string | null | undefined): boolean {
+  return !!instr && !existingDescription;
 }

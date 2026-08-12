@@ -210,6 +210,42 @@ export function parseIcs(t: string): IcsEvent[] {
   return events;
 }
 
+// Moodle soft-redirect ke login mengembalikan HTTP 200 — deteksi lewat URL
+// final (hop sudah mengikuti redirect) sebagai sinyal PRIMER; substring
+// "logintoken" di body sekunder (halaman valid bisa memuatnya di JS/config —
+// false-positive kalau dipakai sendirian).
+export function assertCalendarSessionAlive(r: { url: string; text: string }): void {
+  if (r.url.includes("/login/index.php") || r.text.includes("logintoken")) {
+    throw new HebatError(401, "Sesi HE-BAT berakhir — hubungkan ulang HE-BAT.");
+  }
+}
+
+// Kumpulkan hasil allSettled halaman kursus:
+//  - fulfilled dengan sections KOSONG = soft-redirect ke login (HTTP 200) atau
+//    HTML rusak — SKIP. Halaman kursus Moodle asli SELALU punya minimal
+//    section 0; entri kosong di-upsert hanya akan MENIMPA instruksi yang
+//    sudah bagus.
+//  - rejection 401 (URL login / logintoken) = sesi mati di tengah crawl —
+//    lempar, bukan warn: hentikan crawl supaya pengguna disuruh hubungkan ulang.
+//  - rejection lain = kursus gagal diambil — skip dengan warn.
+export function collectCrawlResults(results: PromiseSettledResult<HebatCourseInstructions>[]): HebatCourseInstructions[] {
+  const out: HebatCourseInstructions[] = [];
+  for (const res of results) {
+    if (res.status === "fulfilled") {
+      if (res.value.sections.length === 0) {
+        logger.warn("HE-BAT: halaman kursus tanpa section (sesi mati / soft-redirect ke login?) — dilewati");
+        continue;
+      }
+      out.push(res.value);
+    } else if ((res.reason as HebatError)?.status === 401) {
+      throw res.reason;
+    } else {
+      logger.warn(`HE-BAT: instruksi kursus gagal diambil: ${(res.reason as Error)?.message || res.reason}`);
+    }
+  }
+  return out;
+}
+
 // Crawl instruksi tugas saat connect: ambil course id user dari halaman
 // kalender (upcoming + month, dedupe), lalu halaman tiap kursus untuk section
 // summary. Sesi dipakai via sessionCookie (memory-only). Kursus yang gagal
@@ -219,20 +255,24 @@ export function parseIcs(t: string): IcsEvent[] {
 // sukses; authtoken sudah tersimpan oleh pemanggil).
 export async function fetchCourseInstructions(sessionCookie: string): Promise<HebatCourseInstructions[]> {
   let deadlineId: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false; // dipakai crawlInstructions: stop di sela batch saat deadline menang
   const deadline = new Promise<never>((_, reject) => {
     deadlineId = setTimeout(
-      () => reject(new HebatError(0, "HE-BAT: waktu pengambilan instruksi habis.")),
+      () => {
+        cancelled = true;
+        reject(new HebatError(0, "HE-BAT: waktu pengambilan instruksi habis."));
+      },
       CRAWL_DEADLINE_MS
     );
   });
   try {
-    return await Promise.race([crawlInstructions(sessionCookie), deadline]);
+    return await Promise.race([crawlInstructions(sessionCookie, () => cancelled), deadline]);
   } finally {
     clearTimeout(deadlineId); // timer selalu dibersihkan, menang atau kalah
   }
 }
 
-async function crawlInstructions(sessionCookie: string): Promise<HebatCourseInstructions[]> {
+async function crawlInstructions(sessionCookie: string, isCancelled: () => boolean = () => false): Promise<HebatCourseInstructions[]> {
   const jar = new CookieJar();
   jar.seed(sessionCookie);
 
@@ -246,11 +286,9 @@ async function crawlInstructions(sessionCookie: string): Promise<HebatCourseInst
     if (r.status !== 200) {
       throw new HebatError(r.status, `HE-BAT: halaman kalender tidak dapat diakses (HTTP ${r.status}).`);
     }
-    // Moodle soft-redirect ke login mengembalikan HTTP 200 — deteksi form
-    // login supaya courseIds kosong tidak menimpa instruksi yang sudah bagus.
-    if (r.text.includes("logintoken")) {
-      throw new HebatError(401, "Sesi HE-BAT berakhir — hubungkan ulang HE-BAT.");
-    }
+    // Soft-redirect ke login = sesi mati — jangan sampai courseIds kosong
+    // menimpa instruksi yang sudah bagus.
+    assertCalendarSessionAlive(r);
     for (const m of r.text.matchAll(/course\/view\.php\?id=(\d+)/g)) courseIds.add(m[1]);
   }
 
@@ -264,15 +302,15 @@ async function crawlInstructions(sessionCookie: string): Promise<HebatCourseInst
   // 2. Ambil halaman tiap kursus — paralel dengan batas concurrency ~4.
   const instructions: HebatCourseInstructions[] = [];
   for (let i = 0; i < ids.length; i += 4) {
+    if (isCancelled()) break; // deadline menang — hentikan tanpa request sia-sia
     const results = await Promise.allSettled(ids.slice(i, i + 4).map(async (id) => {
       const r = await hop(`${BASE}/course/view.php?id=${id}`, { method: "GET" }, jar, 0, TIMEOUT_COURSE_MS);
+      // Soft-redirect ke login juga bisa terjadi per halaman kursus (HTTP 200)
+      assertCalendarSessionAlive(r);
       if (r.status !== 200) throw new HebatError(r.status, `kursus HTTP ${r.status}`);
       return parseCoursePage(r.text, id);
     }));
-    for (const res of results) {
-      if (res.status === "fulfilled") instructions.push(res.value);
-      else logger.warn(`HE-BAT: instruksi kursus gagal diambil: ${(res.reason as Error)?.message || res.reason}`);
-    }
+    instructions.push(...collectCrawlResults(results));
   }
   return instructions;
 }
