@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Build artifact standalone untuk container (Koyeb/Vercel) — image kecil,
+  // tidak perlu node_modules penuh di runtime; jalan via node server.js.
+  output: "standalone",
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",

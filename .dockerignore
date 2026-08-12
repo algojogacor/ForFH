@@ -1,0 +1,28 @@
+# Build context Next.js — rahasia & artefak lokal jangan masuk image
+node_modules
+.next
+out
+.git
+.gitignore
+
+# Rahasia / kredensial — TIDAK PERNAH masuk image
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+
+# Database lokal (dev) — produksi pakai Turso remote
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Log & artefak lokal
+dev-server.log
+*.log
+.DS_Store
+.claude
+.vercel
+npm-debug.log*
