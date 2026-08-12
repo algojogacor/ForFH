@@ -64,6 +64,52 @@ const FIXTURE_HAM = `<html><body>
 </ul>
 </body></html>`;
 
+// Fixture summarytext dengan div BERSARANG (no-overflow) + entity di nama
+// aktivitas: scanner div berimbang harus menangkap teks setelah </div> dalam,
+// entity didecode saat collect.
+const FIXTURE_NESTED = `<html><body>
+<h1>2026Ganjil - FHK25601040 - Hukum Teknologi - S1 - Ilmu Hukum</h1>
+<ul class="course-section-list">
+<li id="section-1" class="section course-section main clearfix" data-id="90001" data-number="1" data-sectionname="Sesi 1">
+<div class="summarytext"><div class="no-overflow"><p>PENTING: baca ini.</p></div><p>Silakan kerjakan.</p></div>
+<div class="activity-item focus-control " data-activityname="Hukum &amp; Teknologi" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`;
+
+// Fixture summarytext dengan class tambahan (class="summarytext d-inline") —
+// pembuka dicari longgar, bukan exact match class.
+const FIXTURE_EXTRA_CLASS = `<html><body>
+<h1>2026Ganjil - FHK25601041 - Hukum Perdata - S1 - Ilmu Hukum</h1>
+<ul class="course-section-list">
+<li id="section-1" class="section course-section main clearfix" data-id="90011" data-number="1" data-sectionname="Sesi 1">
+<div class="summarytext d-inline"><p>Instruksi Perdata.</p></div>
+<div class="activity-item focus-control " data-activityname="Tugas Perdata" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`;
+
+// Fixture TANPA h1: graceful — shortname kosong, tidak crash.
+const FIXTURE_NO_H1 = `<html><body><div class="content">tanpa h1</div></body></html>`;
+
+// Fixture TANPA section sama sekali: sections kosong, graceful.
+const FIXTURE_NO_SECTION = `<html><body>
+<h1>2026Ganjil - FHK25601042 - Hukum Pidana - S1 - Ilmu Hukum</h1>
+<div class="content">tanpa daftar section</div>
+</body></html>`;
+
+// Fixture untuk uji pencocokan dipersempit: shortname entry FHK25601032,
+// fullname TIDAK memuat kata "Hukum".
+const FIXTURE_GATED = `<html><body>
+<h1>2026Ganjil - FHK25601032 - Bahasa Inggris - S1 - FIB</h1>
+<ul class="course-section-list">
+<li id="section-1" class="section course-section main clearfix" data-id="90021" data-number="1" data-sectionname="Sesi 1">
+<div class="summarytext"><p>Instruksi uji gated.</p></div>
+<div class="activity-item focus-control " data-activityname="Tugas Bahasa" data-region="activity-card"></div>
+</li>
+</ul>
+</body></html>`;
+
 // Fixture kursus PIH (C-2): satu section beraktivitas TANPA summarytext sama
 // sekali — graceful: tugas tampil tanpa instruksi.
 const FIXTURE_PIH = `<html><body>
@@ -245,6 +291,50 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
     "case/whitespace beda tetap cocok (normalisasi)"
   );
   assert(instructionFor([], { courseCode: "FHK25601032", courseName: "Hak Asasi Manusia", title: "Assessment HAM" }) === null, "tanpa instruksi -> null");
+
+  // #1: summarytext dengan div bersarang — scanner berimbang menangkap utuh
+  const nested = parseCoursePage(FIXTURE_NESTED, "90001");
+  assert(nested.sections[0].summary.includes("Silakan kerjakan"), "teks setelah div bersarang ikut tertangkap");
+  assert(nested.sections[0].summary.includes("PENTING: baca ini."), "teks di dalam div bersarang dipertahankan");
+  // #6: entity didecode SEKALI saat collect — nilai tersimpan bersih
+  assert(nested.sections[0].assignments[0] === "Hukum & Teknologi", "entity &amp; didecode di data-activityname");
+  const instrNested = instructionFor([nested], { courseCode: "FHK25601040", courseName: "Hukum Teknologi", title: "Hukum & Teknologi" });
+  assert(!!instrNested, "title ber-entity cocok dengan aktivitas ter-decode");
+  assert(!!instrNested && instrNested.includes("Silakan kerjakan"), "instruksi utuh (termasuk teks pasca div dalam)");
+
+  // #1: class summarytext dengan tambahan ("summarytext d-inline") tetap cocok
+  const extraClass = parseCoursePage(FIXTURE_EXTRA_CLASS, "90011");
+  assert(extraClass.sections[0].summary.includes("Instruksi Perdata."), "class summarytext dengan tambahan tetap cocok");
+
+  // #7: halaman tanpa h1 — graceful, shortname kosong
+  const noH1 = parseCoursePage(FIXTURE_NO_H1, "90031");
+  assert(noH1.shortname === "", "tanpa h1 -> shortname kosong (tidak crash)");
+  assert(noH1.fullname === "", "tanpa h1 -> fullname kosong");
+  assert(instructionFor([noH1], { courseCode: "", courseName: "Hukum", title: "X" }) === null, "tanpa h1 -> instructionFor null");
+
+  // #7: kursus tanpa section — sections kosong, instructionFor null
+  const noSection = parseCoursePage(FIXTURE_NO_SECTION, "90041");
+  assert(noSection.sections.length === 0, "kursus tanpa section -> sections []");
+  assert(
+    instructionFor([noSection], { courseCode: "FHK25601042", courseName: "Hukum Pidana", title: "X" }) === null,
+    "kursus tanpa section -> instructionFor null"
+  );
+
+  // #5: pencocokan kursus dipersempit — shortname hanya saat courseCode ada,
+  // fallback fullname hanya saat courseCode kosong.
+  const gated = parseCoursePage(FIXTURE_GATED, "90051");
+  assert(
+    !!instructionFor([gated], { courseCode: "FHK25601032", courseName: "", title: "Tugas Bahasa" }),
+    "kontrol: courseCode cocok shortname -> instruksi ditemukan"
+  );
+  assert(
+    instructionFor([gated], { courseCode: "", courseName: "Hukum", title: "Tugas Bahasa" }) === null,
+    "courseCode kosong: shortname entry tidak dipakai (fullname tanpa 'Hukum' -> null)"
+  );
+  assert(
+    instructionFor([gated], { courseCode: "FHK25601033", courseName: "Bahasa Inggris", title: "Tugas Bahasa" }) === null,
+    "courseCode beda: entry shortname FHK25601032 tidak dipakai, fullname fallback dimatikan"
+  );
 
   console.log("  ── Campus sync (jenis campus_data) ──");
   assert(CAMPUS_DATA_JENIS.length === 9, "9 jenis data kampus terdaftar");

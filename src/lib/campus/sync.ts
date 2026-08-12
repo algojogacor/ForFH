@@ -217,14 +217,19 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
   let taskCount = 0, newTasks = 0, instructionCount = 0;
   for (const ev of icsEvents) {
     const t = icsToTask(ev);
-    // DESCRIPTION iCal selalu kosong — isi dari instruksi section summary HE-BAT
+    // DESCRIPTION iCal selalu kosong — isi dari instruksi section summary HE-BAT.
+    // Instruksi TIDAK menimpa description yang sudah ada (edit user di modal):
+    // update path hanya mengisi kalau existing kosong; insert path tugas baru
+    // langsung dapat instruksi.
     const instr = t.description ? null : instructionFor(instructions, t);
-    const description = instr || t.description || null;
-    if (instr) instructionCount++;
-    const courseId = t.courseCode ? courseIdsByCode.get(t.courseCode) : undefined;
     const existing = t.externalId
       ? await db.query.tasks.findFirst({ where: and(eq(tasks.userId, userId), eq(tasks.externalId, t.externalId)) })
       : null;
+    const description = existing
+      ? (existing.description || instr || t.description || null)
+      : (instr || t.description || null);
+    if (instr) instructionCount++;
+    const courseId = t.courseCode ? courseIdsByCode.get(t.courseCode) : undefined;
     if (existing) {
       await db.update(tasks).set({
         title: t.title,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { db, campusAccounts } from "@/lib/db";
+import { and, eq } from "drizzle-orm";
+import { db, campusAccounts, campusData } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { connectHebat, fetchCourseInstructions } from "@/lib/campus/hebat";
@@ -41,14 +41,23 @@ export async function POST(req: NextRequest) {
     await saveHebatToken(session.id, h.userid, h.authtoken);
 
     // Crawl instruksi tugas (section summary) pakai sesi aktif — gagal TIDAK
-    // menggagalkan connect (authtoken tetap tersimpan). upsert tetap dijalankan
-    // walau kosong ([]) agar UI tahu instruksi sudah pernah di-crawl.
+    // menggagalkan connect (authtoken tetap tersimpan). upsert dijalankan walau
+    // kosong ([]) agar UI tahu instruksi sudah pernah di-crawl — KECUALI sudah
+    // ada instruksi lama: sesi mati (soft-redirect ke login = HTTP 200 +
+    // courseIds kosong) tidak boleh menimpa data bagus dengan [].
     let instruksiCount = 0;
     if (h.sessionCookie) {
       try {
         const inst = await fetchCourseInstructions(h.sessionCookie);
-        await upsertCampusData(session.id, "instruksi_tugas", inst);
-        instruksiCount = inst.length;
+        const existingInst = await db.select().from(campusData).where(
+          and(eq(campusData.userId, session.id), eq(campusData.jenis, "instruksi_tugas"))
+        ).limit(1).then((rows) => rows[0]);
+        if (inst.length > 0 || !existingInst) {
+          await upsertCampusData(session.id, "instruksi_tugas", inst);
+          instruksiCount = inst.length;
+        } else {
+          logger.warn(`HE-BAT crawl instruksi: hasil kosong, instruksi lama dipertahankan (user ${session.id})`);
+        }
       } catch (error: any) {
         logger.warn(`HE-BAT crawl instruksi gagal (user ${session.id}): ${error?.message || error}`);
       }

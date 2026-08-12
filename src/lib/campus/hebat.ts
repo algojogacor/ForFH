@@ -13,7 +13,12 @@ export type { HebatCourseInstructions, HebatSection } from "./mappings";
 const BASE = "https://hebat.elearning.unair.ac.id";
 const UA = "forfh-sync/1.0 (Mozilla/5.0 compatible)";
 const TIMEOUT_MS = 15000;
+const TIMEOUT_COURSE_MS = 10000; // halaman kursus saat crawl instruksi (banyak halaman)
 const MAX_REDIRECTS = 5;
+// Batas crawl instruksi saat connect: cap jumlah kursus + deadline total —
+// platform serverless bisa mati di tengah (authtoken sudah tersimpan lebih dulu).
+const CRAWL_COURSE_CAP = 30;
+const CRAWL_DEADLINE_MS = 40000;
 
 export class HebatError extends Error {
   status: number;
@@ -51,9 +56,9 @@ class CookieJar {
   }
 }
 
-async function hop(url: string, init: RequestInit, jar: CookieJar, depth: number): Promise<{ status: number; text: string; url: string }> {
+async function hop(url: string, init: RequestInit, jar: CookieJar, depth: number, timeoutMs: number = TIMEOUT_MS): Promise<{ status: number; text: string; url: string }> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const headers: Record<string, string> = { "User-Agent": UA };
   if (jar.count > 0) headers.Cookie = jar.header();
   if (init.headers) Object.assign(headers, init.headers);
@@ -72,7 +77,7 @@ async function hop(url: string, init: RequestInit, jar: CookieJar, depth: number
     const loc = r.headers.get("location");
     if (!loc) return { status, text: "", url };
     if (depth >= MAX_REDIRECTS) throw new HebatError(0, "HE-BAT: terlalu banyak redirect.");
-    return hop(new URL(loc, url).toString(), { method: "GET" }, jar, depth + 1);
+    return hop(new URL(loc, url).toString(), { method: "GET" }, jar, depth + 1, timeoutMs);
   }
   return { status, text: await r.text(), url };
 }
@@ -209,9 +214,25 @@ export function parseIcs(t: string): IcsEvent[] {
 // kalender (upcoming + month, dedupe), lalu halaman tiap kursus untuk section
 // summary. Sesi dipakai via sessionCookie (memory-only). Kursus yang gagal
 // di-skip (bukan menggagalkan crawl); throw hanya kalau halaman kalender
-// tidak bisa diambil. Batasi concurrency ~4, TIMEOUT_MS per request — total
-// crawl aman di bawah 60 detik.
+// tidak bisa diambil. Batasi concurrency ~4, timeout per request 10s, cap
+// jumlah kursus — plus deadline total: kalau kalah, throw (connect tetap
+// sukses; authtoken sudah tersimpan oleh pemanggil).
 export async function fetchCourseInstructions(sessionCookie: string): Promise<HebatCourseInstructions[]> {
+  let deadlineId: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    deadlineId = setTimeout(
+      () => reject(new HebatError(0, "HE-BAT: waktu pengambilan instruksi habis.")),
+      CRAWL_DEADLINE_MS
+    );
+  });
+  try {
+    return await Promise.race([crawlInstructions(sessionCookie), deadline]);
+  } finally {
+    clearTimeout(deadlineId); // timer selalu dibersihkan, menang atau kalah
+  }
+}
+
+async function crawlInstructions(sessionCookie: string): Promise<HebatCourseInstructions[]> {
   const jar = new CookieJar();
   jar.seed(sessionCookie);
 
@@ -225,15 +246,26 @@ export async function fetchCourseInstructions(sessionCookie: string): Promise<He
     if (r.status !== 200) {
       throw new HebatError(r.status, `HE-BAT: halaman kalender tidak dapat diakses (HTTP ${r.status}).`);
     }
+    // Moodle soft-redirect ke login mengembalikan HTTP 200 — deteksi form
+    // login supaya courseIds kosong tidak menimpa instruksi yang sudah bagus.
+    if (r.text.includes("logintoken")) {
+      throw new HebatError(401, "Sesi HE-BAT berakhir — hubungkan ulang HE-BAT.");
+    }
     for (const m of r.text.matchAll(/course\/view\.php\?id=(\d+)/g)) courseIds.add(m[1]);
   }
 
+  // Cap jumlah kursus — jaga total waktu crawl tetap terkendali.
+  let ids = Array.from(courseIds);
+  if (ids.length > CRAWL_COURSE_CAP) {
+    logger.warn(`HE-BAT: ${ids.length} kursus, hanya ${CRAWL_COURSE_CAP} pertama yang di-crawl`);
+    ids = ids.slice(0, CRAWL_COURSE_CAP);
+  }
+
   // 2. Ambil halaman tiap kursus — paralel dengan batas concurrency ~4.
-  const ids = Array.from(courseIds);
   const instructions: HebatCourseInstructions[] = [];
   for (let i = 0; i < ids.length; i += 4) {
     const results = await Promise.allSettled(ids.slice(i, i + 4).map(async (id) => {
-      const r = await hop(`${BASE}/course/view.php?id=${id}`, { method: "GET" }, jar, 0);
+      const r = await hop(`${BASE}/course/view.php?id=${id}`, { method: "GET" }, jar, 0, TIMEOUT_COURSE_MS);
       if (r.status !== 200) throw new HebatError(r.status, `kursus HTTP ${r.status}`);
       return parseCoursePage(r.text, id);
     }));

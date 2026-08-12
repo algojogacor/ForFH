@@ -268,6 +268,37 @@ export function classNameFromCategories(categories: string | undefined): string 
 // campus_data jenis "instruksi_tugas" — matching tugas dilakukan by nama
 // aktivitas (data-activityname) di section yang sama.
 
+// Decode entity HTML dasar (sama pola dengan descriptionToText) — dipakai saat
+// collect data-activityname supaya nilai tersimpan bersih (sekali lintas,
+// bukan di normalizeTaskText).
+function decodeBasicEntities(s: string): string {
+  return s.replace(/&(amp|lt|gt|quot|apos|nbsp|#39|#160);/gi, (m, name: string) => {
+    const direct = ENTITY_MAP[name.toLowerCase()];
+    return direct !== undefined ? direct : m;
+  });
+}
+
+// Ambil isi div.summarytext dengan pencocokan tag div BERIMBANG (depth).
+// Regex non-greedy lama berhenti di </div> pertama — summarytext Moodle sering
+// berisi div bersarang (no-overflow, alert, tabel) sehingga instruksi
+// terpotong. Pembuka dicari longgar (toleran class tambahan); tag <div ... />
+// self-closing diabaikan. Murni regex, tanpa DOM.
+function extractSummaryText(block: string): string {
+  const open = /<div[^>]*class="[^"]*summarytext[^"]*"[^>]*>/i.exec(block);
+  if (!open) return "";
+  let depth = 1; // pembuka summarytext ikut dihitung — </div> pertama = penutupnya
+  const tagRe = /<\/?div\b[^>]*>/g;
+  tagRe.lastIndex = open.index + open[0].length;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(block))) {
+    const tag = m[0];
+    if (tag.startsWith("</")) depth--;
+    else if (!/\/>$/.test(tag)) depth++; // <div ... /> self-closing diabaikan
+    if (depth === 0) return block.slice(open.index + open[0].length, m.index);
+  }
+  return ""; // pembuka tanpa penutup (HTML terpotong) — jangan potong blok
+}
+
 export interface HebatSection {
   sectionId: string; // data-id <li id="section-..."> (id section Moodle)
   sectionName: string; // data-sectionname (judul section)
@@ -287,7 +318,8 @@ export interface HebatCourseInstructions {
 // <li id="section-..."> (blok section; aktivitas <li class="activity"> bukan
 // <li id="section-"> jadi tidak ikut terpotong). Urutan section dipertahankan.
 export function parseCoursePage(html: string, courseId: string): HebatCourseInstructions {
-  const fullname = (/<h1[^>]*>([^<]+)<\/h1>/.exec(html)?.[1] || "").trim();
+  // H1 bisa memuat tag inline (<span>) — strip dulu sebelum split segmen
+  const fullname = (/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] || "").replace(/<[^>]+>/g, "").trim();
   const shortname = fullname.split(" - ")[1] || "";
   const sections: HebatSection[] = [];
   const marker = '<li id="section-';
@@ -299,12 +331,13 @@ export function parseCoursePage(html: string, courseId: string): HebatCourseInst
     const sectionId = /data-id="(\d+)"/.exec(head)?.[1] || "";
     if (sectionId) {
       const sectionName = /data-sectionname="([^"]*)"/.exec(head)?.[1] || "";
-      // Ambil summarytext pertama dalam blok (HTML mentah, dibersihkan nanti)
-      const summary = /<div class="summarytext"[^>]*>(.*?)<\/div>/s.exec(block)?.[1] || "";
+      // Ambil summarytext pertama dalam blok — div berimbang (HTML mentah,
+      // dibersihkan nanti via descriptionToText)
+      const summary = extractSummaryText(block);
       const assignments: string[] = [];
       const actRe = /data-activityname="([^"]*)"/g;
       let m: RegExpExecArray | null;
-      while ((m = actRe.exec(block))) assignments.push(m[1]);
+      while ((m = actRe.exec(block))) assignments.push(decodeBasicEntities(m[1]));
       sections.push({ sectionId, sectionName, summary, assignments });
     }
     if (next < 0) break;
@@ -324,6 +357,9 @@ export function normalizeTaskText(s: string): string {
 // atau fullname memuat courseName), lalu section yang berisi aktivitas
 // bernama task.title. Kembalikan teks instruksi (HTML dibersihkan), null
 // kalau kursus/section tidak ditemukan atau summary kosong.
+// Pencocokan dipersempit: shortname HANYA saat courseCode non-kosong, fallback
+// fullname HANYA saat courseCode kosong (supaya kode yang salah arah tidak
+// menimpa pencocokan by kode MK).
 export function instructionFor(
   instructions: HebatCourseInstructions[],
   task: { courseCode: string; courseName: string; title: string }
@@ -331,8 +367,8 @@ export function instructionFor(
   if (!task.title) return null;
   const entry = instructions.find(
     (e) =>
-      e.shortname === task.courseCode ||
-      (!!task.courseName && normalizeTaskText(e.fullname).includes(normalizeTaskText(task.courseName)))
+      (!!task.courseCode && e.shortname === task.courseCode) ||
+      (!task.courseCode && !!task.courseName && normalizeTaskText(e.fullname).includes(normalizeTaskText(task.courseName)))
   );
   if (!entry) return null;
   const target = normalizeTaskText(task.title);
