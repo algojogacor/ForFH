@@ -113,6 +113,13 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
   assert(descriptionToText("   \n ") === "", "whitespace saja -> kosong");
   assert(descriptionToText("A\n\n\n\nB") === "A\nB", "baris kosong ganda dipadatkan");
   assert(descriptionToText("a  b   c") === "a b c", "spasi ganda dipadatkan");
+  assert(descriptionToText("a &amp;lt; b &amp;nbsp; c") === "a &lt; b &nbsp; c", "tanpa decode ganda entity");
+  assert(descriptionToText("5 < 10 dan 3 > 1") === "5 < 10 dan 3 > 1", "teks polos < > tidak dibuang");
+  assert(
+    descriptionToText("Kuis &#8211; Bab 2 &#8220;Hukum&#8221; &#8230;") === "Kuis – Bab 2 “Hukum” …",
+    "entity numerik non-ASCII didecode"
+  );
+  assert(descriptionToText("&#x27;petik&#x27;") === "'petik'", "entity numerik heksadesimal didecode");
   const longDesc = "x".repeat(2000);
   assert(descriptionToText(longDesc) === longDesc, "deskripsi panjang tidak dipotong (tanpa cap)");
   const htmlTask = icsToTask({

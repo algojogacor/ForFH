@@ -74,33 +74,49 @@ export function titleFromSummary(summary: string | undefined): string {
 // dibuang, entity didecode. Murni regex (tanpa DOM) — aman dipakai di test
 // runner yang tidak punya jsdom. Tanpa batas panjang: deskripsi bulat-bulat
 // lewat modal edit, jadi memotong di sini = kehilangan data saat disimpan.
-const HTML_ENTITY_MAP: Record<string, string> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#39;": "'",
-  "&apos;": "'",
-  "&nbsp;": " ",
+// Entity didecode SEKALI lintas (bukan loop) supaya "&amp;lt;" -> "&lt;",
+// bukan decode ganda jadi "<".
+const ENTITY_MAP: Record<string, string> = {
+  "amp": "&",
+  "lt": "<",
+  "gt": ">",
+  "quot": '"',
+  "apos": "'",
+  "nbsp": " ",
+  "#39": "'",
+  "#160": " ",
+  // Titik kode non-ASCII yang umum di teks Moodle (en-dash, kutip, dst.)
+  "#8211": "–",
+  "#8212": "—",
+  "#8220": "“",
+  "#8221": "”",
+  "#8230": "…",
+  "#215": "×",
+  "#169": "©",
+  "#171": "«",
+  "#187": "»",
 };
 
 export function descriptionToText(raw: string | undefined): string {
   if (!raw) return "";
-  let s = raw
+  const s = raw
     .replace(/<br\s*\/?>/gi, "\n") // <br>, <br/>, <br />
     .replace(/<\/(p|div|li)>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
+    .replace(/<\/?[a-zA-Z][^>]*>/g, "") // tag utuh dibuang; "5 < 10" selamat
     .replace(/\r\n/g, "\n");
-  // Entity numerik &#d; (ASCII umum; selain itu dibiarkan apa adanya)
-  s = s.replace(/&#(\d+);/g, (_m, code: string) => {
-    const n = Number(code);
-    if (n === 160) return " "; // &nbsp; numerik
-    return n >= 32 && n <= 126 ? String.fromCharCode(n) : _m;
+  const decoded = s.replace(/&(amp|lt|gt|quot|apos|nbsp|#\d+|#x[0-9a-fA-F]+);/g, (m, name: string) => {
+    const direct = ENTITY_MAP[name.toLowerCase()];
+    if (direct !== undefined) return direct;
+    const num = name[0] === "#"
+      ? (name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10))
+      : NaN;
+    if (Number.isFinite(num)) {
+      if (num === 160) return " "; // &nbsp; numerik
+      return num >= 32 && num <= 0xffff ? String.fromCodePoint(num) : m;
+    }
+    return m;
   });
-  for (const [ent, val] of Object.entries(HTML_ENTITY_MAP)) {
-    s = s.split(ent).join(val);
-  }
-  return s.replace(/\n{2,}/g, "\n").replace(/ {2,}/g, " ").trim();
+  return decoded.replace(/\n{2,}/g, "\n").replace(/ {2,}/g, " ").trim();
 }
 
 export function icsToTask(ev: IcsEvent): MappedTask {
