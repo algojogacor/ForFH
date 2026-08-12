@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Bell, Loader2, Check } from "lucide-react";
+import { Bell, Loader2, Check, RefreshCw, Unlink, GraduationCap } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -19,6 +19,75 @@ export default function SettingsPage() {
   const [isSubscribingPush, setIsSubscribingPush] = useState(false);
   const [isSendingTestPush, setIsSendingTestPush] = useState(false);
 
+  // --- Sinkronisasi Kampus ---
+  const [campus, setCampus] = useState<any>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [showHebatForm, setShowHebatForm] = useState(false);
+  const [hebatPassword, setHebatPassword] = useState("");
+  const [isReconnecting, setIsReconnecting] = useState(false);
+
+  const loadCampusStatus = () => {
+    fetch("/api/campus/status")
+      .then((r) => r.json())
+      .then((data) => setCampus(data))
+      .catch(() => {});
+  };
+
+  const handleSyncNow = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch("/api/campus/sync", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        success(`Sinkronisasi selesai: ${data.summary.tasks} tugas, ${data.summary.schedules} jadwal, ${data.summary.grades} nilai.`);
+      } else {
+        toast(data.error || "Sinkronisasi gagal.");
+      }
+    } catch {
+      toast("Gagal terhubung ke server.");
+    } finally {
+      setIsSyncing(false);
+      loadCampusStatus();
+    }
+  };
+
+  const handleHebatReconnect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hebatPassword) return;
+    setIsReconnecting(true);
+    try {
+      const res = await fetch("/api/campus/hebat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: hebatPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        success("HE-BAT terhubung. Kalender tugas akan tersinkron.");
+        setShowHebatForm(false);
+        setHebatPassword("");
+      } else {
+        toast(data.error || "Gagal menghubungkan HE-BAT.");
+      }
+    } catch {
+      toast("Gagal terhubung ke server.");
+    } finally {
+      setIsReconnecting(false);
+      loadCampusStatus();
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm("Putuskan koneksi kampus? Data yang sudah tersinkron tetap tersimpan, tapi tidak akan diperbarui lagi.")) return;
+    try {
+      await fetch("/api/campus/disconnect", { method: "POST" });
+      success("Koneksi kampus diputuskan.");
+      setCampus(null);
+    } catch {
+      toast("Gagal memutuskan koneksi.");
+    }
+  };
+
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
@@ -32,6 +101,8 @@ export default function SettingsPage() {
         }
       })
       .catch(() => {});
+
+    loadCampusStatus();
 
     if (typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window) {
       setIsPushSupported(true);
@@ -113,6 +184,137 @@ export default function SettingsPage() {
           title="Pengaturan"
           description="Profil pengguna, preferensi zona waktu, dan notifikasi."
         />
+
+        {/* Sinkronisasi Kampus */}
+        <Card className="border-border-default">
+          <CardHeader className="py-2.5 px-3.5 border-b border-border-default">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <GraduationCap className="h-4 w-4" />
+              Sinkronisasi Kampus
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3.5 space-y-3 text-xs">
+            {!campus ? (
+              <p className="text-muted-foreground">Memuat status...</p>
+            ) : !campus.connected ? (
+              <div className="p-3 rounded bg-surface-2 border border-border-default text-muted-foreground">
+                Belum terhubung ke akun kampus.{" "}
+                <a href="/login" className="text-foreground font-medium underline">
+                  Login dengan email kampus
+                </a>{" "}
+                untuk menyinkronkan jadwal, nilai, dan tugas.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2.5 rounded bg-surface-2 border border-border-subtle">
+                    <div className="text-muted-foreground">Akun kampus</div>
+                    <div className="font-medium text-foreground">{campus.campusEmail}</div>
+                    <div className="text-muted-foreground">NIM {campus.nim}</div>
+                  </div>
+                  <div className="p-2.5 rounded bg-surface-2 border border-border-subtle">
+                    <div className="text-muted-foreground">HE-BAT</div>
+                    <div className="font-medium text-foreground">
+                      {campus.hebatConnected ? "Terhubung" : "Belum terhubung"}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowHebatForm((v) => !v)}
+                      className="text-primary font-medium hover:underline"
+                    >
+                      {showHebatForm ? "Batal" : "Hubungkan ulang"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>
+                    Sync terakhir:{" "}
+                    {campus.lastSyncAt
+                      ? new Date(campus.lastSyncAt).toLocaleString("id-ID")
+                      : "belum pernah"}
+                  </span>
+                  <span
+                    className={
+                      campus.lastSyncStatus === "error"
+                        ? "text-status-danger font-medium"
+                        : campus.lastSyncStatus === "ok"
+                          ? "text-status-success font-medium"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {campus.lastSyncStatus === "error"
+                      ? "Gagal"
+                      : campus.lastSyncStatus === "ok"
+                        ? "Sinkron"
+                        : "Menunggu"}
+                  </span>
+                </div>
+
+                {campus.lastSyncSummary && (
+                  <div className="p-2.5 rounded bg-surface-2 border border-border-subtle text-muted-foreground">
+                    {campus.lastSyncSummary}
+                  </div>
+                )}
+                {campus.lastSyncError && (
+                  <div className="p-2.5 rounded bg-status-danger-subtle border border-status-danger/20 text-status-danger">
+                    {campus.lastSyncError}
+                  </div>
+                )}
+
+                {showHebatForm && (
+                  <form onSubmit={handleHebatReconnect} className="flex gap-2 items-center">
+                    <input
+                      type="password"
+                      value={hebatPassword}
+                      onChange={(e) => setHebatPassword(e.target.value)}
+                      placeholder="Password HE-BAT (kalau beda dari Kampus Kita)"
+                      className="flex-1 bg-surface-1 border border-border-default rounded-md px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      disabled={isReconnecting}
+                      className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {isReconnecting && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Hubungkan
+                    </button>
+                  </form>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSyncNow}
+                    disabled={isSyncing}
+                    className="flex-1 py-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isSyncing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    Sync sekarang
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDisconnect}
+                    className="px-3 py-2 rounded-md border border-border-default text-status-danger text-xs font-medium hover:bg-status-danger-subtle flex items-center gap-1.5"
+                  >
+                    <Unlink className="h-3.5 w-3.5" />
+                    Putuskan
+                  </button>
+                </div>
+
+                <p className="text-muted-foreground">
+                  Sinkron otomatis tiap 30 menit. Presensi Kampus Kita bersifat agregat per
+                  mata kuliah sehingga tidak disinkronkan — dicatat manual di Kehadiran.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         <form onSubmit={handleSaveSettings} className="space-y-4">
           {/* Profile & Timezone */}

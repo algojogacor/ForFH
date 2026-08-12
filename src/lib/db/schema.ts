@@ -12,6 +12,8 @@ export const users = sqliteTable(
     usernameNormalized: text("username_normalized").notNull().unique(),
     passwordHash: text("password_hash").notNull(),
     displayName: text("display_name"),
+    email: text("email"),
+    emailNormalized: text("email_normalized"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -21,6 +23,37 @@ export const users = sqliteTable(
   },
   (table) => ({
     usernameNormIdx: uniqueIndex("users_username_norm_idx").on(table.usernameNormalized),
+    emailNormIdx: uniqueIndex("users_email_norm_idx").on(table.emailNormalized),
+  })
+);
+
+// Akun kampus terhubung (Kampus Kita + HE-BAT) — token dienkripsi at-rest,
+// password asli TIDAK PERNAH disimpan. jwt_enc = JWT Kampus Kita (~1 tahun),
+// hebat_authtoken_enc = kunci kalender HE-BAT (tanpa sesi). Lihat src/lib/campus.
+export const campusAccounts = sqliteTable(
+  "campus_accounts",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    campusEmail: text("campus_email").notNull(),
+    campusNim: text("campus_nim").notNull(),
+    jwtEnc: text("jwt_enc").notNull(),
+    hebatUserid: text("hebat_userid"),
+    hebatAuthtokenEnc: text("hebat_authtoken_enc"),
+    lastSyncAt: integer("last_sync_at", { mode: "timestamp_ms" }),
+    lastSyncStatus: text("last_sync_status").notNull().default("never"), // never | ok | error
+    lastSyncSummary: text("last_sync_summary"),
+    lastSyncError: text("last_sync_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(strftime('%s', 'now') * 1000)`),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(strftime('%s', 'now') * 1000)`),
+  },
+  (table) => ({
+    lastSyncIdx: index("campus_accounts_last_sync_idx").on(table.lastSyncAt),
   })
 );
 
@@ -118,6 +151,7 @@ export const courses = sqliteTable(
     onlineUrl: text("online_url"),
     notes: text("notes"),
     archived: integer("archived").notNull().default(0),
+    externalId: text("external_id"), // dari Kampus Kita (peserta-mata-kuliah / jadwal)
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -128,6 +162,7 @@ export const courses = sqliteTable(
   (table) => ({
     userIdIdx: index("courses_user_id_idx").on(table.userId),
     termIdIdx: index("courses_term_id_idx").on(table.academicTermId),
+    userExternalIdx: index("courses_user_external_idx").on(table.userId, table.externalId),
   })
 );
 
@@ -149,6 +184,7 @@ export const classSchedules = sqliteTable(
     validFrom: integer("valid_from", { mode: "timestamp_ms" }),
     validUntil: integer("valid_until", { mode: "timestamp_ms" }),
     enabled: integer("enabled").notNull().default(1),
+    externalId: text("external_id"), // dari Kampus Kita (jadwal-kuliah)
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -160,6 +196,7 @@ export const classSchedules = sqliteTable(
     userIdIdx: index("class_schedules_user_id_idx").on(table.userId),
     courseIdIdx: index("class_schedules_course_id_idx").on(table.courseId),
     dayOfWeekIdx: index("class_schedules_day_of_week_idx").on(table.dayOfWeek),
+    userExternalIdx: index("class_schedules_user_external_idx").on(table.userId, table.externalId),
   })
 );
 
@@ -183,10 +220,11 @@ export const tasks = sqliteTable(
     estimatedMinutes: integer("estimated_minutes"),
     status: text("status").notNull().default("NOT_STARTED"), // NOT_STARTED, IN_PROGRESS, REVISION, DONE, OVERDUE
     progress: integer("progress").notNull().default(0), // 0-100
-    source: text("source").notNull().default("manual"), // manual, ai, quick_capture
+    source: text("source").notNull().default("manual"), // manual, ai, quick_capture, campus
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
     version: integer("version").notNull().default(1),
+    externalId: text("external_id"), // dari HE-BAT (UID event iCal)
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -200,6 +238,7 @@ export const tasks = sqliteTable(
     dueAtIdx: index("tasks_due_at_idx").on(table.dueAt),
     statusIdx: index("tasks_status_idx").on(table.status),
     updatedAtIdx: index("tasks_updated_at_idx").on(table.updatedAt),
+    userExternalIdx: index("tasks_user_external_idx").on(table.userId, table.externalId),
   })
 );
 
@@ -383,6 +422,7 @@ export const attendance = sqliteTable(
     classDate: text("class_date").notNull(), // YYYY-MM-DD
     status: text("status").notNull().default("PRESENT"), // PRESENT, PERMIT, SICK, ABSENT
     notes: text("notes"),
+    externalId: text("external_id"), // dari Kampus Kita (presensi-kuliah)
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -408,6 +448,7 @@ export const grades = sqliteTable(
     score: real("score"), // e.g. 85.5
     letterGrade: text("letter_grade"), // e.g. "A", "B+"
     gradePoint: real("grade_point"), // e.g. 4.0
+    externalId: text("external_id"), // dari Kampus Kita (riwayat-khs)
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -418,6 +459,7 @@ export const grades = sqliteTable(
   (table) => ({
     userIdIdx: index("grades_user_id_idx").on(table.userId),
     courseIdIdx: index("grades_course_id_idx").on(table.courseId),
+    userExternalIdx: index("grades_user_external_idx").on(table.userId, table.externalId),
   })
 );
 

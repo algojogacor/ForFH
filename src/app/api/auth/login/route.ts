@@ -1,74 +1,103 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { db, users } from "@/lib/db";
-import { normalizeUsername, verifyPassword } from "@/lib/auth/password";
+import { db, users, campusAccounts } from "@/lib/db";
 import { createSession, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
+import { encryptText } from "@/lib/crypto/at-rest";
+import { loginCampus, KampusKitaClient, KampusKitaError } from "@/lib/campus/kampuskita";
+import { connectHebat } from "@/lib/campus/hebat";
+import { runCampusSync, saveHebatToken, markSyncError } from "@/lib/campus/sync";
 import { logger } from "@/lib/logger";
 
+// Login satu-satunya: email kampus + password (sama dengan Kampus Kita).
+// Password tidak pernah disimpan — hasil login (JWT KK, authtoken HE-BAT)
+// disimpan terenkripsi at-rest. Akun dibuat otomatis dari email pertama kali.
 export async function POST(req: NextRequest) {
   try {
-
     const body = await req.json();
-    const { username, password } = body;
+    const { email, password } = body;
 
-    if (!username || !password) {
-      return NextResponse.json(
-        { error: "Username dan password wajib diisi." },
-        { status: 400 }
-      );
+    if (!email || !password) {
+      return NextResponse.json({ error: "Email dan password wajib diisi." }, { status: 400 });
+    }
+    if (!String(email).includes("@")) {
+      return NextResponse.json({ error: "Gunakan email kampus, mis. nama@student.unair.ac.id." }, { status: 400 });
     }
 
-    const usernameNormalized = normalizeUsername(username);
+    const emailNormalized = String(email).trim().toLowerCase();
     const ip = req.headers.get("x-forwarded-for") || "anonymous-client";
-    const rateLimitKey = `login:${usernameNormalized}:${ip}`;
+    const rateLimitKey = `campus-login:${emailNormalized}:${ip}`;
 
-    // Rate limiting: max 5 failed attempts in 5 minutes, 15-minute lockout
     const rateLimit = await checkRateLimit(rateLimitKey, {
       maxAttempts: 5,
       windowMs: 5 * 60 * 1000,
       blockDurationMs: 15 * 60 * 1000,
     });
-
     if (!rateLimit.allowed) {
       return NextResponse.json({ error: rateLimit.error }, { status: 429 });
     }
 
-    // Lookup user by normalized username
-    const user = await db.query.users.findFirst({
-      where: eq(users.usernameNormalized, usernameNormalized),
-    });
+    // 1. Login ke Kampus Kita (verifikasi email+password ke server UNAIR)
+    let campusLogin;
+    try {
+      campusLogin = await loginCampus(emailNormalized, password);
+    } catch (e: any) {
+      if (e instanceof KampusKitaError) {
+        return NextResponse.json({ error: e.message }, { status: e.status === 0 ? 502 : e.status });
+      }
+      throw e;
+    }
 
+    const nim = campusLogin.nim || "";
+    const localPart = emailNormalized.split("@")[0].replace(/[^a-zA-Z0-9_.-]/g, "");
+
+    // 2. Upsert user by email_normalized (akun dibuat otomatis)
+    let user = await db.query.users.findFirst({ where: eq(users.emailNormalized, emailNormalized) });
     if (!user) {
-      return NextResponse.json(
-        { error: "Username atau password salah." },
-        { status: 401 }
-      );
+      const id = crypto.randomUUID();
+      await db.insert(users).values({
+        id,
+        username: localPart || nim,
+        usernameNormalized: (localPart || nim).toLowerCase(),
+        passwordHash: "unused:campuskita-auth", // login hanya lewat kampus; kolom NOT NULL
+        displayName: localPart || nim,
+        email: emailNormalized,
+        emailNormalized,
+      });
+      user = await db.query.users.findFirst({ where: eq(users.emailNormalized, emailNormalized) });
+      if (!user) throw new Error("Gagal membuat akun pengguna.");
     }
 
-    const isValidPassword = await verifyPassword(password, user.passwordHash);
-    if (!isValidPassword) {
-      return NextResponse.json(
-        { error: "Username atau password salah." },
-        { status: 401 }
-      );
+    // 3. Simpan akun kampus terenkripsi (upsert)
+    const jwtEnc = encryptText(campusLogin.jwt);
+    const existingAcc = await db.query.campusAccounts.findFirst({ where: eq(campusAccounts.userId, user.id) });
+    if (existingAcc) {
+      await db.update(campusAccounts)
+        .set({ campusEmail: emailNormalized, campusNim: nim, jwtEnc, updatedAt: new Date() })
+        .where(eq(campusAccounts.userId, user.id));
+    } else {
+      await db.insert(campusAccounts).values({
+        userId: user.id,
+        campusEmail: emailNormalized,
+        campusNim: nim,
+        jwtEnc,
+        lastSyncStatus: "never",
+      });
     }
 
-    // Reset rate limit on success
     await resetRateLimit(rateLimitKey);
 
-    // Create session and set cookie
+    // 4. Sesi ForFH
     const { token, expiresAt } = await createSession(user.id);
-
     const response = NextResponse.json({
       success: true,
       user: {
         id: user.id,
         username: user.username,
         displayName: user.displayName,
+        nim,
       },
     });
-
     response.cookies.set({
       name: SESSION_COOKIE_NAME,
       value: token,
@@ -79,6 +108,9 @@ export async function POST(req: NextRequest) {
       path: "/",
     });
 
+    // 5. Sync awal + connect HE-BAT — fire-and-forget, tidak memblokir login
+    void bootstrapCampus(user.id, campusLogin.jwt, nim, password);
+
     return response;
   } catch (error: any) {
     logger.error("Login error:", error);
@@ -86,5 +118,35 @@ export async function POST(req: NextRequest) {
       { error: "Terjadi kesalahan internal saat memproses login." },
       { status: 500 }
     );
+  }
+}
+
+async function bootstrapCampus(userId: string, jwt: string, nim: string, password: string): Promise<void> {
+  try {
+    // display name dari profil kampus (best-effort)
+    try {
+      const status = await new KampusKitaClient(jwt).status();
+      const nm = status[0]?.NM_PENGGUNA;
+      if (nm) {
+        await db.update(users).set({ displayName: String(nm) }).where(eq(users.id, userId));
+      }
+    } catch (e: any) {
+      logger.warn(`bootstrap ${userId}: profil kampus gagal: ${e?.message || e}`);
+    }
+
+    // HE-BAT: coba NIM+password yang sama; kalau beda, dilewati (UI bisa hubungkan ulang)
+    if (nim) {
+      try {
+        const h = await connectHebat(nim, password);
+        await saveHebatToken(userId, h.userid, h.authtoken);
+      } catch (e: any) {
+        logger.warn(`bootstrap ${userId}: HE-BAT connect dilewati: ${e?.message || e}`);
+      }
+    }
+
+    await runCampusSync(userId, { force: true });
+  } catch (e: any) {
+    logger.error(`bootstrap sync ${userId} gagal:`, e);
+    await markSyncError(userId, e?.message || "Sync awal gagal");
   }
 }

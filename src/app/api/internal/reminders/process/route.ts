@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Receiver } from "@upstash/qstash";
 import { processDueReminders } from "@/lib/notifications/worker";
+import { syncDueUsers } from "@/lib/campus/sync";
 import { logger } from "@/lib/logger";
 
 export async function POST(req: NextRequest) {
@@ -60,10 +61,15 @@ export async function POST(req: NextRequest) {
   }
 
   const result = await processDueReminders();
+
+  // Tick sinkronisasi kampus: jalankan di cron yang sama (tanpa jadwal QStash baru)
+  const syncResult = await syncDueUsers();
+
   return NextResponse.json({
     success: true,
     processedUsers: result.processedUsers,
     notificationsSent: result.notificationsSent,
+    campusSync: syncResult,
     timestamp: new Date().toISOString(),
   });
 }

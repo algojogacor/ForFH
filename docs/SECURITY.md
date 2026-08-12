@@ -1,5 +1,29 @@
 # ForFH V4 - Security Architecture & Hardening Guide
 
+## 0. Campus Authentication (Kampus Kita UNAIR)
+
+ForFH V4 mengganti login username/password internal dengan **login email kampus**
+(`@student.unair.ac.id` + password), diverifikasi ke server Kampus Kita UNAIR
+(`apikampuskita-mahasiswa.unair.ac.id`). Prinsip keamanan:
+
+- **Password tidak pernah disimpan** — hanya hasil login yang disimpan: JWT Kampus
+  Kita dan authtoken kalender HE-BAT (Moodle UNAIR).
+- **Enkripsi at-rest (AES-256-GCM)** — token disimpan dalam `campus_accounts`
+  (`jwt_enc`, `hebat_authtoken_enc`) dengan format `v1:<iv>:<tag>:<ct>`. Kunci
+  diturunkan dari `SESSION_SECRET` via HKDF-SHA256 (`src/lib/crypto/at-rest.ts`),
+  sehingga kebocoran DB saja tidak cukup untuk membuka token.
+- **Kredensial tidak pernah di-log** — logger global meredaksi password & token;
+  client `src/lib/campus/*` tidak menulis token ke log.
+- **Rate limiting** — login kampus & reconnect HE-BAT dibatasi 5 percobaan / 5 menit
+  dengan lockout 15 menit (`checkRateLimit`), mencegah brute force.
+- **Sesi ForFH tetap kuat** — token sesi 32-byte acak, disimpan hanya SHA-256 hash,
+  cookie HttpOnly + Secure + SameSite=Lax + `__Host-` di production.
+- **Fire-and-forget sync** — sync awal tidak memblokir respons login; error sync
+  hanya dicatat (never exposed ke log dengan isi token).
+- **Non-goals (sengaja tidak dilakukan)**: tidak ada enumerasi akun, tidak ada
+  akses tanpa izin pemilik akun, presensi Kampus Kita bersifat agregat per MK
+  sehingga tidak disinkronkan (tetap manual).
+
 ## 1. Authentication & Credential Storage
 
 ### 1.1 Password Hashing Specification

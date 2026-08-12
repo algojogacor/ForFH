@@ -14,10 +14,29 @@ export async function initializeDatabaseSchema() {
       username_normalized TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       display_name TEXT,
+      email TEXT,
+      email_normalized TEXT,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     );`,
     `CREATE UNIQUE INDEX IF NOT EXISTS users_username_norm_idx ON users(username_normalized);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS users_email_norm_idx ON users(email_normalized);`,
+
+    `CREATE TABLE IF NOT EXISTS campus_accounts (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      campus_email TEXT NOT NULL,
+      campus_nim TEXT NOT NULL,
+      jwt_enc TEXT NOT NULL,
+      hebat_userid TEXT,
+      hebat_authtoken_enc TEXT,
+      last_sync_at INTEGER,
+      last_sync_status TEXT NOT NULL DEFAULT 'never',
+      last_sync_summary TEXT,
+      last_sync_error TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    );`,
+    `CREATE INDEX IF NOT EXISTS campus_accounts_last_sync_idx ON campus_accounts(last_sync_at);`,
 
     `CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -72,11 +91,13 @@ export async function initializeDatabaseSchema() {
       online_url TEXT,
       notes TEXT,
       archived INTEGER NOT NULL DEFAULT 0,
+      external_id TEXT,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     );`,
     `CREATE INDEX IF NOT EXISTS courses_user_id_idx ON courses(user_id);`,
     `CREATE INDEX IF NOT EXISTS courses_term_id_idx ON courses(academic_term_id);`,
+    `CREATE INDEX IF NOT EXISTS courses_user_external_idx ON courses(user_id, external_id);`,
 
     `CREATE TABLE IF NOT EXISTS class_schedules (
       id TEXT PRIMARY KEY,
@@ -90,12 +111,14 @@ export async function initializeDatabaseSchema() {
       valid_from INTEGER,
       valid_until INTEGER,
       enabled INTEGER NOT NULL DEFAULT 1,
+      external_id TEXT,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     );`,
     `CREATE INDEX IF NOT EXISTS class_schedules_user_id_idx ON class_schedules(user_id);`,
     `CREATE INDEX IF NOT EXISTS class_schedules_course_id_idx ON class_schedules(course_id);`,
     `CREATE INDEX IF NOT EXISTS class_schedules_day_of_week_idx ON class_schedules(day_of_week);`,
+    `CREATE INDEX IF NOT EXISTS class_schedules_user_external_idx ON class_schedules(user_id, external_id);`,
 
     `CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
@@ -114,6 +137,7 @@ export async function initializeDatabaseSchema() {
       completed_at INTEGER,
       deleted_at INTEGER,
       version INTEGER NOT NULL DEFAULT 1,
+      external_id TEXT,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     );`,
@@ -122,6 +146,7 @@ export async function initializeDatabaseSchema() {
     `CREATE INDEX IF NOT EXISTS tasks_due_at_idx ON tasks(due_at);`,
     `CREATE INDEX IF NOT EXISTS tasks_status_idx ON tasks(status);`,
     `CREATE INDEX IF NOT EXISTS tasks_updated_at_idx ON tasks(updated_at);`,
+    `CREATE INDEX IF NOT EXISTS tasks_user_external_idx ON tasks(user_id, external_id);`,
 
     `CREATE TABLE IF NOT EXISTS subtasks (
       id TEXT PRIMARY KEY,
@@ -223,6 +248,7 @@ export async function initializeDatabaseSchema() {
       class_date TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'PRESENT',
       notes TEXT,
+      external_id TEXT,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     );`,
     `CREATE UNIQUE INDEX IF NOT EXISTS attendance_user_course_date_idx ON attendance(user_id, course_id, class_date);`,
@@ -237,11 +263,13 @@ export async function initializeDatabaseSchema() {
       score REAL,
       letter_grade TEXT,
       grade_point REAL,
+      external_id TEXT,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     );`,
     `CREATE INDEX IF NOT EXISTS grades_user_id_idx ON grades(user_id);`,
     `CREATE INDEX IF NOT EXISTS grades_course_id_idx ON grades(course_id);`,
+    `CREATE INDEX IF NOT EXISTS grades_user_external_idx ON grades(user_id, external_id);`,
 
     `CREATE TABLE IF NOT EXISTS files (
       id TEXT PRIMARY KEY,

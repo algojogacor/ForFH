@@ -15,6 +15,7 @@
 | **AI Reliability Layer** | ✅ PASS | Round-robin multi-slot Groq/Ollama router with circuit breaker & single-repair guard. |
 | **Scheduled Reminders** | ✅ PASS | Fail-closed Upstash QStash signature verification & delivery deduplication. |
 | **Offline Multi-User** | ✅ PASS | User-scoped IndexedDB instances (`forfh-user-${userId}-v2`) with logout pruning. |
+| **Campus Sync (Kampus Kita + HE-BAT)** | ✅ PASS | Login email kampus UNAIR → sync otomatis jadwal/kursus, KHS (nilai), dan tugas HE-BAT via iCal. Token terenkripsi at-rest (AES-256-GCM). Cron tick di `internal/reminders/process`. |
 
 ---
 
@@ -26,8 +27,9 @@
 - **Google Drive Storage & Upload Sanitization Tests**: 8 passed (Filename sanitization, path traversal slashes stripping, executable payload `.exe`/`.bat`/`.sh` rejection, length boundary checks).
 - **Pasal.id Legal API & FRBR URI Tests**: 4 passed (URI normalization, leading slash stripping, whitespace trimming, standardized error messaging).
 - **Reminder Windows & Notification Deduplication Tests**: 7 passed (Indonesian date formatting, relative countdown overdue calculation, deduplication key uniqueness).
+- **Campus Sync Tests**: 45 passed (enkripsi at-rest roundtrip & mask email, parse iCal fixture nyata HE-BAT dengan folded line, pemetaan waktu/hari/grade point, iCal → tugas (UID → external_id, kode MK dari CATEGORIES), jadwal-kuliah KK → schedules, riwayat KHS → grades).
 
-**Total Results: 49 PASSED, 0 FAILED**
+**Total Results: 94 PASSED, 0 FAILED**
 
 ---
 
@@ -98,7 +100,7 @@ VAPID_SUBJECT=mailto:admin@forfh.id
 ## 4. Quality Commands Reference
 
 ```bash
-# Run complete quality validation gate (ESLint + TypeScript + 49 Tests)
+# Run complete quality validation gate (ESLint + TypeScript + 94 Tests)
 npm run quality
 
 # Run test suite only
