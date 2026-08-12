@@ -90,7 +90,12 @@ export async function loginCampus(email: string, password: string): Promise<Camp
   } catch {
     /* body bukan json */
   }
-  if (status === 401 || status === 422) msg = "Email atau password salah. Pastikan email memakai @student.unair.ac.id.";
+  // 401/404/422 semuanya dikembalikan sebagai 401 generik:
+  // 404 ("username is not exist") tidak boleh membocorkan keberadaan email.
+  if (status === 401 || status === 404 || status === 422) {
+    msg = "Email atau password salah. Pastikan email memakai @student.unair.ac.id.";
+    throw new KampusKitaError(401, msg);
+  }
   throw new KampusKitaError(status || 401, msg);
 }
 

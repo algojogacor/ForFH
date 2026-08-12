@@ -16,6 +16,9 @@ ForFH V4 mengganti login username/password internal dengan **login email kampus*
   client `src/lib/campus/*` tidak menulis token ke log.
 - **Rate limiting** — login kampus & reconnect HE-BAT dibatasi 5 percobaan / 5 menit
   dengan lockout 15 menit (`checkRateLimit`), mencegah brute force.
+- **Anti-enumerasi** — semua kegagalan login kampus (401/404/422) dikembalikan
+  sebagai 401 generik; 404 "username is not exist" dari server UNAIR tidak
+  diteruskan ke klien (mencegah pengecekan keberadaan email).
 - **Sesi ForFH tetap kuat** — token sesi 32-byte acak, disimpan hanya SHA-256 hash,
   cookie HttpOnly + Secure + SameSite=Lax + `__Host-` di production.
 - **Fire-and-forget sync** — sync awal tidak memblokir respons login; error sync
