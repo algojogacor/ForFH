@@ -42,8 +42,8 @@ export default function TasksPage() {
     fetchData();
   }, []);
 
-  const handleToggleDone = async (task: any, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleToggleDone = async (task: any, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
     const nextStatus = task.status === "DONE" ? "NOT_STARTED" : "DONE";
     // Optimistic UI update
     setTasks((prev) =>
@@ -67,15 +67,15 @@ export default function TasksPage() {
     setModalOpen(true);
   };
 
-  const handleEdit = (task: any, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleEdit = (task: any, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
     setActiveMenuId(null);
     setTaskToEdit(task);
     setModalOpen(true);
   };
 
-  const handleDelete = async (taskId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDelete = async (taskId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
     setActiveMenuId(null);
     if (!confirm("Hapus tugas ini?")) return;
     try {
@@ -200,7 +200,7 @@ export default function TasksPage() {
               return (
                 <div
                   key={task.id}
-                  onClick={() => handleEdit(task, {} as any)}
+                  onClick={(e) => handleEdit(task, e)}
                   className="p-3 sm:px-4 flex items-start gap-3 hover:bg-surface-2 cursor-pointer transition-colors group relative text-xs"
                 >
                   {/* Completion Toggle */}

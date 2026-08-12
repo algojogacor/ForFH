@@ -40,15 +40,15 @@ export default function CoursesPage() {
     setModalOpen(true);
   };
 
-  const handleEdit = (course: any, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleEdit = (course: any, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
     setActiveMenuId(null);
     setSelectedCourse(course);
     setModalOpen(true);
   };
 
-  const handleDelete = async (courseId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDelete = async (courseId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
     setActiveMenuId(null);
     if (!confirm("Hapus mata kuliah ini?")) return;
     try {
