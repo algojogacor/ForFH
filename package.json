@@ -11,12 +11,13 @@
     "db:push": "drizzle-kit push",
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx src/tests/run-tests.ts",
+    "test": "tsx src/tests/run-tests.mts",
     "quality": "npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
     "@upstash/qstash": "^2.7.20",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "canvas-confetti": "^1.9.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

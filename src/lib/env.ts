@@ -26,6 +26,10 @@ const serverEnvSchema = z
     TURSO_DATABASE_URL: z.string().default("file:forfh-local.db"),
     TURSO_AUTH_TOKEN: z.string().optional(),
 
+    // WhatsApp Bot (Baileys) — dipakai route pairing & OTP
+    WA_BOT_PHONE: z.string().optional(), // E.164 tanpa "+" (requestPairingCode)
+    WA_ADMIN_PHONE: z.string().optional(), // E.164 — pemilik bot
+
     // AI Providers (Optional integrations - fail gracefully per integration)
     GROQ_API_KEY_1: z.string().optional(),
     GROQ_API_KEY_2: z.string().optional(),

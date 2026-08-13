@@ -380,6 +380,31 @@ export async function initializeDatabaseSchema() {
       blocked_until INTEGER
     );`,
 
+    `CREATE TABLE IF NOT EXISTS wa_bindings (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      phone TEXT NOT NULL UNIQUE,
+      lid TEXT UNIQUE,
+      jid TEXT UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      otp_code TEXT,
+      otp_expires_at INTEGER,
+      otp_attempts INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS wa_bindings_user_id_idx ON wa_bindings(user_id);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS wa_bindings_phone_idx ON wa_bindings(phone);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS wa_bindings_lid_idx ON wa_bindings(lid);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS wa_bindings_jid_idx ON wa_bindings(jid);`,
+    `CREATE TABLE IF NOT EXISTS wa_signal_keys (
+      type TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      PRIMARY KEY (type, key)
+    );`,
+
     `CREATE TABLE IF NOT EXISTS app_config (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,

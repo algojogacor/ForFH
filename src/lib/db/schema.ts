@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from "drizzle-orm/sqlite-core";
 import { sql, relations } from "drizzle-orm";
 
 // ----------------------------------------------------
@@ -673,6 +673,53 @@ export const authRateLimits = sqliteTable("auth_rate_limits", {
   blockedUntil: integer("blocked_until", { mode: "timestamp_ms" }),
 });
 
+// ----------------------------------------------------
+// 10. WhatsApp (Baileys 7) — binding & auth-state keys
+// ----------------------------------------------------
+export const waBindings = sqliteTable(
+  "wa_bindings",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    phone: text("phone").notNull().unique(), // verification identity, E.164 tanpa "+" (628...)
+    lid: text("lid").unique(), // transport identity — user part "@lid"
+    jid: text("jid").unique(), // transport JID siap kirim (PN atau LID jid)
+    status: text("status").notNull().default("pending"), // pending | active | unlinked
+    otpCode: text("otp_code"), // sha256 hex
+    otpExpiresAt: integer("otp_expires_at"), // ms
+    otpAttempts: integer("otp_attempts").notNull().default(0),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),
+  },
+  (table) => ({
+    userIdIdx: uniqueIndex("wa_bindings_user_id_idx").on(table.userId),
+    phoneIdx: uniqueIndex("wa_bindings_phone_idx").on(table.phone),
+    lidIdx: uniqueIndex("wa_bindings_lid_idx").on(table.lid),
+    jidIdx: uniqueIndex("wa_bindings_jid_idx").on(table.jid),
+  })
+);
+
+export const waSignalKeys = sqliteTable(
+  "wa_signal_keys",
+  {
+    type: text("type").notNull(), // namespace Baileys: lid-mapping, tctoken, device-list, session-*, pre-key-*, app-state-*
+    key: text("key").notNull(), // id dalam namespace
+    value: text("value").notNull(), // terenkripsi (encryptText)
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.type, table.key] }),
+  })
+);
+
 export const appConfig = sqliteTable("app_config", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -699,6 +746,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   files: many(files),
   pushSubscriptions: many(pushSubscriptions),
   legalBookmarks: many(legalBookmarks),
+  waBindings: many(waBindings),
   campusData: many(campusData),
 }));
 
