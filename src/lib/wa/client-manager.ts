@@ -189,9 +189,17 @@ export class WaClientManager {
     }
   }
 
-  /** Pairing: requestPairingCode tetap dipakai (Baileys 7). */
-  async requestPairingCode(phone: string): Promise<string> {
+  /** Pairing: requestPairingCode tetap dipakai (Baileys 7). Tunggu handshake
+   *  ws selesai dulu — route memanggilnya ~segera setelah ensureWaClient()
+   *  (state "connecting"), dan tanpa tunggu sendNode lempar 428 Connection
+   *  Closed → 502. waitForSocketOpen menunggu event 'open' ws (tanpa timeout
+   *  sendiri; dibungkus race 25s ≈ connectTimeoutMs Baileys). */
+  async requestPairingCode(phone: string, timeoutMs = 25_000): Promise<string> {
     if (!this.socket) throw new Error("Socket belum siap — panggil ensureWaClient() dulu");
+    await Promise.race([
+      this.socket.waitForSocketOpen(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("WAIT_WS_OPEN_TIMEOUT")), timeoutMs)),
+    ]);
     return this.socket.requestPairingCode(phone);
   }
 
@@ -351,9 +359,12 @@ export class WaClientManager {
 
   private async handleCredsUpdate(creds: Partial<AuthenticationCreds>): Promise<void> {
     if (!this.authState) return;
-    // Baileys mengganti objek creds — ikuti referensi baru. Event creds.update
-    // bertipe Partial di rc14, tapi payload runtime selalu objek creds lengkap.
-    this.authState.creds = creds as AuthenticationCreds;
+    // MERGE ke creds yang ada, BUKAN replace: payload rc14 sering PARTIAL
+    // ({ me }, { signedPreKey }, { accountSettings }, { preKeys }...) —
+    // replace membuang noiseKey/signedIdentityKey/pairingEphemeralKeyPair dan
+    // menyimpan creds cacat ke DB (pairing berikutnya rusak permanen).
+    // Payload ber-ref sama (socket.js emit authState.creds) = no-op, aman.
+    Object.assign(this.authState.creds, creds);
     await this.persistCredsNow();
   }
 
