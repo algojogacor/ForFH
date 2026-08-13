@@ -3,6 +3,7 @@ import { eq, and, isNull, asc } from "drizzle-orm";
 import { db, classSchedules, courses, tasks, exams } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { executeAIRequest } from "@/lib/ai/router";
+import { getCachedAI, setCachedAI } from "@/lib/ai/cache";
 import { DailyInsightSchema } from "@/lib/ai/schemas";
 import { DAILY_INSIGHT_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { formatDateIndonesian, formatTime24 } from "@/lib/utils";
@@ -91,6 +92,14 @@ export async function GET(req: NextRequest) {
       .map((e) => `${e.name} (${formatDateIndonesian(e.examAt, false)})`)
       .join(", ") || "Tidak ada ujian terdekat.";
 
+  // Cache harian: insight hari ini deterministik (data agenda tetap) — hindari
+  // panggil provider berulang dalam satu hari.
+  const dayKey = now.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }); // YYYY-MM-DD (waktu WIB)
+  const cachedInsight = await getCachedAI(user.id, "daily_insight", dayKey);
+  if (cachedInsight) {
+    return NextResponse.json({ success: true, insight: cachedInsight, cached: true });
+  }
+
   const systemPrompt = DAILY_INSIGHT_SYSTEM_PROMPT.replace(
     "{{CURRENT_TIME}}",
     `${formatTime24(now)} WIB`
@@ -110,6 +119,9 @@ export async function GET(req: NextRequest) {
   });
 
   if (result.success && result.data) {
+    if (!result.fallbackUsed) {
+      await setCachedAI(user.id, "daily_insight", dayKey, result.data, 24 * 60 * 60 * 1000);
+    }
     return NextResponse.json({ success: true, insight: result.data });
   }
 

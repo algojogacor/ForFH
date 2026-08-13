@@ -1,6 +1,8 @@
+import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { executeAIRequest } from "@/lib/ai/router";
+import { getCachedAI, setCachedAI } from "@/lib/ai/cache";
 import { LegalExplainerSchema } from "@/lib/ai/schemas";
 import { LEGAL_EXPLAINER_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { getPasalLawDetail } from "@/lib/legal/pasal-client";
@@ -32,6 +34,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Teks pasal atau peraturan tidak ditemukan." }, { status: 400 });
   }
 
+  // Cache per pertanyaan: deterministik (teks pasal + pertanyaan sama → jawaban sama)
+  const cacheKey = crypto
+    .createHash("sha256")
+    .update(`${title}|${regulationText}|${specificQuestion || ""}`)
+    .digest("hex")
+    .slice(0, 64);
+  const cached = await getCachedAI(user.id, "explain_law", cacheKey);
+  if (cached) {
+    return NextResponse.json({ success: true, explanation: cached, cached: true });
+  }
+
   const systemPrompt = LEGAL_EXPLAINER_SYSTEM_PROMPT.replace("{{REGULATION_CONTENT}}", regulationText);
   const userPrompt = `
 Peraturan: ${title}
@@ -47,6 +60,9 @@ ${specificQuestion ? `Pertanyaan Khusus Mahasiswa: ${specificQuestion}` : "Jelas
   });
 
   if (result.success && result.data) {
+    if (!result.fallbackUsed) {
+      await setCachedAI(user.id, "explain_law", cacheKey, result.data, 24 * 60 * 60 * 1000);
+    }
     return NextResponse.json({ success: true, explanation: result.data });
   }
 
