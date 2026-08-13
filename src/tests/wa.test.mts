@@ -78,8 +78,19 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     await store.saveCreds(fakeCreds);
     const restored = await store.loadAuthState();
     assert(restored.creds.me?.id === "62812@lid", "creds round-trip: save → load utuh");
+    // REGRESI 502: JSON.stringify(Buffer) → {type:"Buffer",data} → parse →
+    // plain object → crypto Baileys crash (ERR_INVALID_ARG_TYPE). Round-trip
+    // HARUS mengembalikan Buffer sejati.
+    assert(Buffer.isBuffer(restored.creds.noiseKey?.private) && Buffer.isBuffer(restored.creds.noiseKey?.public), "creds round-trip: Buffer di-restore sebagai Buffer (bukan {type:Buffer,data})");
     const rawRow = await memDb.select().from(dbSchema.appConfig).where(eq(dbSchema.appConfig.key, "wa_creds")).limit(1).then((r) => r[0]);
     assert(!!rawRow && !rawRow.value.includes("62812"), "creds tersimpan terenkripsi (plaintext tidak tampil)");
+
+    // Row LAMA berformat {type:"Buffer",data:[...]} (terpolusi pre-fix) tetap
+    // di-revive jadi Buffer — migrasi mulus tanpa reset manual.
+    const legacyCreds: any = { me: { id: "62812@lid" }, registered: true, noiseKey: { private: { type: "Buffer", data: [97, 98] }, public: { type: "Buffer", data: [99, 100] } } };
+    await store.saveCreds(legacyCreds);
+    const restoredLegacy = await store.loadAuthState();
+    assert(Buffer.isBuffer(restoredLegacy.creds.noiseKey?.private) && Buffer.isBuffer(restoredLegacy.creds.noiseKey?.public), "creds round-trip: format lama {type:Buffer,data} di-revive jadi Buffer");
 
     // save/load key per namespace
     await store.set({ "lid-mapping:lidA": "628111" });
@@ -262,6 +273,7 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
       ev: { on: (ev: string, cb: (p: any) => void) => void };
       sendMessage: () => Promise<any>;
       requestPairingCode: () => Promise<string>;
+      waitForSocketOpen: () => Promise<void>;
       end: (err?: Error) => void;
       handlers: Record<string, (p: any) => void>;
     }
@@ -272,6 +284,7 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
         ev: { on: (ev, cb) => { handlers[ev] = cb; } },
         sendMessage: async () => ({}),
         requestPairingCode: async () => "ABC-DEF",
+        waitForSocketOpen: async () => {},
         end: () => {},
       };
     }
@@ -442,6 +455,45 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     m6.sockets[0].handlers["creds.update"]({ me: { id: "62812@lid" }, registered: true } as any);
     await new Promise((r) => setTimeout(r, 5));
     assert(getHealthIndicators().lastAuthPersistence !== null, "creds.update → lastAuthPersistence tercatat");
+
+    // REGRESI 502: creds.update PARTIAL → MERGE ke creds yang ada, BUKAN
+    // replace. Replace membuang noiseKey/signedIdentityKey/pairingEphemeralKeyPair
+    // → crypto crash pada request pairing berikutnya → 502 permanen.
+    {
+      const s5 = makeFakeSocket();
+      const m5 = new WaClientManager({
+        makeSocket: (() => s5) as any,
+        loadAuth: async () => ({ creds: { me: { id: "62812@lid" }, registered: false, noiseKey: { private: Buffer.from("ab"), public: Buffer.from("cd") } } as any, keys: {} as any }),
+        persistCreds: async () => {},
+        readAuthFlag: async () => false,
+        persistAuthFlag: async () => {},
+        scheduleTimer: (fn) => fn(),
+      });
+      await m5.ensureWaClient();
+      s5.handlers["creds.update"]({ me: { id: "62812@lid" }, registered: true } as any);
+      const credsAfter = (m5 as any).authState?.creds as any;
+      assert(credsAfter?.registered === true, "creds.update partial → field yang hadir diterapkan");
+      assert(Buffer.isBuffer(credsAfter?.noiseKey?.private) && Buffer.isBuffer(credsAfter?.noiseKey?.public), "creds.update partial → noiseKey TETAP utuh (merge, bukan replace)");
+    }
+
+    // creds.update payload ber-ref sama (Baileys emit authState.creds) → no-op
+    // merge; Buffer tidak hilang
+    {
+      const s6 = makeFakeSocket();
+      const m6b = new WaClientManager({
+        makeSocket: (() => s6) as any,
+        loadAuth: async () => ({ creds: { me: { id: "62812@lid" }, registered: false, noiseKey: { private: Buffer.from("ab"), public: Buffer.from("cd") } } as any, keys: {} as any }),
+        persistCreds: async () => {},
+        readAuthFlag: async () => false,
+        persistAuthFlag: async () => {},
+        scheduleTimer: (fn) => fn(),
+      });
+      await m6b.ensureWaClient();
+      const credsRef = (m6b as any).authState?.creds as any;
+      s6.handlers["creds.update"](credsRef);
+      const credsAfter2 = (m6b as any).authState?.creds as any;
+      assert(Buffer.isBuffer(credsAfter2?.noiseKey?.private) && credsAfter2?.registered === false, "creds.update payload ref-sama → merge no-op, creds tetap utuh");
+    }
   }
 
   // ===== F1 — normalize (verification identity) =====

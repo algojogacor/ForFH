@@ -48,6 +48,28 @@ function decodeValue(encoded: string): unknown {
   );
 }
 
+// ---- Serialisasi creds: round-trip EKSAK (pola encodeValue di atas) ----
+// JSON.stringify(Buffer) menghasilkan { type: "Buffer", data: number[] } yang
+// setelah JSON.parse kehilangan tipe Buffer → crypto Baileys crash dengan
+// ERR_INVALID_ARG_TYPE ("Received an instance of Object") saat handshake /
+// generatePairingKey → pairing 502. Marker __buf menjaga tipe eksak; nilai
+// lama berformat { type: "Buffer" } (row terpolusi) tetap di-revive.
+function serializeCreds(creds: AuthenticationCreds): string {
+  return JSON.stringify(creds, (_k, v) => {
+    if (Buffer.isBuffer(v)) return { __buf: v.toString("base64") };
+    if (v && typeof v === "object" && v.type === "Buffer" && Array.isArray(v.data)) {
+      return { __buf: Buffer.from(v.data).toString("base64") };
+    }
+    return v;
+  });
+}
+
+function deserializeCreds(json: string): AuthenticationCreds {
+  return JSON.parse(json, (_k, v) =>
+    v && typeof v === "object" && "__buf" in v ? Buffer.from((v as { __buf: string }).__buf, "base64") : v
+  );
+}
+
 export class WaSessionStore implements SignalKeyStore {
   // null = dalam transaksi (pending map aktif); isi pending = ops belum commit
   private pending: Map<string, string | null> | null = null;
@@ -61,7 +83,7 @@ export class WaSessionStore implements SignalKeyStore {
       .where(eq(schema.appConfig.key, WA_CREDS_KEY)).limit(1).then((r) => r[0]);
     if (!row) return { creds: (await getInitAuthCreds())(), keys: this };
     try {
-      return { creds: JSON.parse(decryptText(row.value)) as AuthenticationCreds, keys: this };
+      return { creds: deserializeCreds(decryptText(row.value)), keys: this };
     } catch (err) {
       logger.warn("wa_creds korup — memulai auth state baru", err);
       return { creds: (await getInitAuthCreds())(), keys: this };
@@ -69,7 +91,7 @@ export class WaSessionStore implements SignalKeyStore {
   }
 
   async saveCreds(creds: AuthenticationCreds): Promise<void> {
-    const payload = encryptText(JSON.stringify(creds));
+    const payload = encryptText(serializeCreds(creds));
     await this.db
       .insert(schema.appConfig).values({ key: WA_CREDS_KEY, value: payload })
       .onConflictDoUpdate({ target: schema.appConfig.key, set: { value: payload } });
