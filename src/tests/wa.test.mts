@@ -150,15 +150,26 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     });
     let txnB!: Promise<unknown>;
     setImmediate(() => {
-      txnB = slowStore2.transaction(async () => { await slowStore2.set({ "lid-mapping:r2": "628b" }); });
+      // T2 MULAI saat T1 masih fase drain/applyOps (setImmediate FIFO — cb
+      // ini terdaftar sebelum setImmediate internal execute) → this.pending
+      // T1 masih hidup; set r2 mendarat di pending map T1 → disapu drain T1.
+      txnB = slowStore2.transaction(async () => {
+        await slowStore2.set({ "lid-mapping:r2": "628b" });
+        // T2 SELESAI setelah T1: menunggu LEBIH LAMA dari durasi drain T1
+        // (beberapa tick setImmediate, << 50ms) → finally T2 deterministik
+        // berjalan SETELAH finally T1 me-restore pending ke null. Tanpa token
+        // guard, finally T2 menimpa this.pending dengan map stale T1 → set()
+        // berikutnya menumpuk di map mati dan tidak pernah di-commit.
+        await new Promise((r) => setTimeout(r, 50));
+      });
     });
     await txnA;
     await txnB;
-    // (b) T2's fn menunggu macrotask → selesai setelah drain T1; set() di
-    // luar transaksi setelah keduanya → langsung commit (bukan map mati)
+    // (b) set() di luar transaksi setelah keduanya → langsung commit (bukan
+    // map mati) — membuktikan finally T2 tidak me-restore pending stale
     const txnC = slowStore2.transaction(async () => { await slowStore2.set({ "lid-mapping:r3": "628c" }); });
     const txnD = slowStore2.transaction(async () => {
-      await new Promise((r) => setImmediate(r)); // melewati drain T1
+      await new Promise((r) => setImmediate(r));
       await slowStore2.set({ "lid-mapping:r4": "628d" });
     });
     await Promise.all([txnC, txnD]);
@@ -685,12 +696,13 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
   // ===== M1 — flushQueue health accounting (Task 5 SHOULD FIX) =====
   {
     resetHealthForTests();
-    // gagal: sendText throw → recordSendFailure per item → degraded
+    // gagal: sendText return false (kontrak produksi — catch internal manager,
+    // TIDAK throw) → recordSendFailure per item → degraded
     const failingManager = {
       ready: false,
       handlers: {} as Record<string, (p: any) => void>,
       isReady() { return this.ready; },
-      async sendText() { throw new Error("kirim antrean gagal"); },
+      async sendText() { return false; },
       on(ev: string, cb: (p: any) => void) { this.handlers[ev] = cb; },
     } as any;
     const fsvc = new WaSendService(failingManager);

@@ -55,13 +55,15 @@ export class WaSendService {
     try {
       while (this.queue.length && this.manager.isReady()) {
         const item = this.queue.shift()!;
-        try {
-          await this.manager.sendText(item.jid, item.text);
-          // M1: health accounting jujur — flush ikut mencatat sukses (reset
-          // failedSendAttempts) / gagal (beruntun → health degraded).
+        // M1: kontrak sendText = return boolean (false saat gagal, TIDAK
+        // throw — catch internal di manager). Branch jujur, pola sama dengan
+        // send()/sendStrict(): sukses reset failedSendAttempts, gagal
+        // beruntun → health degraded.
+        const ok = await this.manager.sendText(item.jid, item.text);
+        if (ok) {
           health.recordSendSuccess();
-        } catch (err) {
-          logger.warn("wa: gagal kirim antrean", err);
+        } else {
+          logger.warn("wa: gagal kirim antrean", { jid: item.jid });
           health.recordSendFailure();
         }
       }
