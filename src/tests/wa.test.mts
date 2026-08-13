@@ -7,6 +7,12 @@ import { WaSessionStore } from "../lib/wa/session-store";
 import { classifyDisconnect, nextBackoffDelayMs, WaClientManager, waKeepAlive } from "../lib/wa/client-manager";
 import { computeHealth, getHealthIndicators, resetHealthForTests } from "../lib/wa/health";
 import type { WaHealthIndicators } from "../lib/wa/types";
+import { normalizePhone, maskPhone } from "../lib/wa/normalize";
+import { collectCandidateJids, resolveWhatsAppIdentity, resolveWhatsAppTarget } from "../lib/wa/identity";
+import type { WaBindingRow } from "../lib/wa/types";
+import { parseCommand } from "../lib/wa/commands";
+import { formatJadwal, formatTugas, formatHelp, clampOutput, formatNotLinked } from "../lib/wa/format";
+import { waRateLimitKey, allowAiReply, resetAiReplyForTests } from "../lib/wa/rate-limit";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
 const MEM_DDL = [
@@ -311,5 +317,103 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     m6.sockets[0].handlers["creds.update"]({ me: { id: "62812@lid" }, registered: true } as any);
     await new Promise((r) => setTimeout(r, 5));
     assert(getHealthIndicators().lastAuthPersistence !== null, "creds.update → lastAuthPersistence tercatat");
+  }
+
+  // ===== F1 — normalize (verification identity) =====
+  {
+    assert(normalizePhone("081234567890") === "6281234567890", "08xx → 628xx");
+    assert(normalizePhone("+62 812-3456-7890") === "6281234567890", "+62 dengan spasi/tanda → 628");
+    assert(normalizePhone("6281234567890") === "6281234567890", "628xx tetap");
+    assert(normalizePhone("81234567890") === "6281234567890", "8xx → 628");
+    assert(normalizePhone("12345") === null, "nomor terlalu pendek → null");
+    assert(maskPhone("6281234567890") === "628****90", "maskPhone menyembunyikan tengah");
+  }
+
+  // ===== F1 — Identity resolver (pure, Baileys utils nyata) =====
+  {
+    const b1 = { id: "b1", userId: "u1", phone: "628111111111", lid: "lidA", jid: null, status: "active", otpCode: null, otpExpiresAt: null, otpAttempts: 0, createdAt: "", updatedAt: "" } as WaBindingRow;
+    const b2 = { id: "b2", userId: "u2", phone: "628222222222", lid: null, jid: null, status: "active", otpCode: null, otpExpiresAt: null, otpAttempts: 0, createdAt: "", updatedAt: "" } as WaBindingRow;
+    const deps = {
+      getPNForLID: async (lid: string) => (lid === "lidA" ? "628111111111" : null),
+      findBindingByLid: async (lid: string): Promise<WaBindingRow | null> => (lid === "lidA" ? b1 : null),
+      findBindingByJid: async (jid: string): Promise<WaBindingRow | null> => null,
+      findBindingByPhone: async (phone: string): Promise<WaBindingRow | null> => {
+        if (phone === "628111111111") return b1;
+        if (phone === "628222222222") return b2;
+        return null;
+      },
+      backfillBinding: async () => {},
+    };
+
+    // PN identity → userId
+    const res1 = await resolveWhatsAppIdentity({ remoteJid: "628111111111@s.whatsapp.net" } as any, deps);
+    assert(res1.userId === "u1", "PN identity → userId via phone lookup");
+    // LID identity → userId via mapping PN → phone
+    const res2 = await resolveWhatsAppIdentity({ remoteJid: "lidA@lid" } as any, deps);
+    assert(res2.userId === "u1" && res2.identity.lid === "lidA", "LID identity → userId (via mapping)");
+    // unknown → null
+    const res3 = await resolveWhatsAppIdentity({ remoteJid: "628999999999@s.whatsapp.net" } as any, deps);
+    assert(res3.userId === null, "identity asing → userId null");
+    // alternates: participant > remoteJid
+    const res4 = await resolveWhatsAppIdentity({ participant: "628222222222@s.whatsapp.net", remoteJid: "628999999999@s.whatsapp.net" } as any, deps);
+    assert(res4.userId === "u2", "participant diprioritaskan atas remoteJid");
+    // tanpa key → null
+    const res5 = await resolveWhatsAppIdentity(null, deps);
+    assert(res5.userId === null, "tanpa key → null");
+
+    // collectCandidateJids dedupe + urutan
+    const jids = collectCandidateJids({ participant: "a@lid", remoteJid: "a@lid", participantAlt: "b@s.whatsapp.net" } as any);
+    assert(jids.length === 2 && jids[0] === "a@lid" && jids[1] === "b@s.whatsapp.net", "kandidat jid dedupe + urut participant > remoteJid > alternates");
+  }
+
+  // ===== F1 — resolveWhatsAppTarget (D2: prefer LID, JANGAN ${lid}@s.whatsapp.net) =====
+  {
+    assert((await resolveWhatsAppTarget({ jid: "628111111111@s.whatsapp.net", lid: "lidA", phone: "628111111111" })) === "628111111111@s.whatsapp.net", "jid valid dipakai apa adanya");
+    assert((await resolveWhatsAppTarget({ jid: null, lid: "lidA", phone: "628111111111" })) === "lidA@lid", "lid → `${lid}@lid` (TANPA @s.whatsapp.net)");
+    assert((await resolveWhatsAppTarget({ jid: null, lid: null, phone: "628111111111" })) === "628111111111@s.whatsapp.net", "hanya phone → fallback `${phone}@s.whatsapp.net`");
+    assert((await resolveWhatsAppTarget({ jid: "lidA@lid", lid: "lidA", phone: "628111111111" })) === "lidA@lid", "jid LID tersimpan → apa adanya");
+  }
+
+  // ===== F1 — commands parser (pure) =====
+  {
+    const c1 = parseCommand("!jadwal besok");
+    assert(c1.command === "jadwal" && c1.args === "besok", "!jadwal besok → command jadwal + args besok");
+    const c2 = parseCommand("!JADWAL");
+    assert(c2.command === "jadwal", "command case-insensitive");
+    const c3 = parseCommand("!menu");
+    assert(c3.command === "menu", "!menu dikenal");
+    const c4 = parseCommand("!tidakada");
+    assert(c4.command === "unknown", "perintah tak dikenal → unknown (dispatcher → !help singkat)");
+    const c5 = parseCommand("halo");
+    assert(c5.command === "unknown", "tanpa prefix ! → unknown (jalur AI)");
+  }
+
+  // ===== F1 — formatter (pure) =====
+  {
+    const out = formatJadwal(
+      [{ startTime: "08:00", endTime: "09:40", courseName: "Hukum Pidana", room: "A-203" }],
+      "📅 *JADWAL HARI INI*",
+      "ketik !jadwal besok utk besok"
+    );
+    assert(out.includes("08:00–09:40") && out.includes("Hukum Pidana") && out.includes("Ruang A-203") && out.includes("1 kelas"), "formatJadwal: waktu, MK, ruang, ringkasan");
+    const outT = formatTugas([{ title: "Resume Buku PIH", dueAt: Date.now() + 3600_000, done: false, courseName: "PIH" }]);
+    assert(outT.includes("1.") && outT.includes("⏳") && outT.includes("PIH"), "formatTugas: nomor urut + status + MK");
+    assert(formatHelp(true).includes("!hubungkan") && formatHelp(true).includes("!putuskan"), "formatHelp memuat semua perintah");
+    assert(clampOutput("x".repeat(4000)).length <= 3500, "clampOutput memotong ke ≤3500 char");
+    assert(formatNotLinked("6281234567890").includes("6281234567890"), "panduan hubungkan memuat nomor sender");
+  }
+
+  // ===== F1 — rate limit key (resolved identity) + interval AI =====
+  {
+    assert(waRateLimitKey("u1", {}, "6281@s.whatsapp.net") === "wa:user:u1", "key memakai userId bila ter-resolve");
+    const keyJid = waRateLimitKey(null, { jid: "6282@s.whatsapp.net" }, "6282@s.whatsapp.net");
+    assert(keyJid === "wa:jid:6282@s.whatsapp.net", "tanpa userId → key dari JID stabil (bukan substring phone)");
+    const keyLid = waRateLimitKey(null, { lid: "lidX" }, "lidX@lid");
+    assert(keyLid === "wa:jid:lidX@lid", "fallback LID → key stabil @lid");
+    resetAiReplyForTests();
+    assert(allowAiReply("wa:user:u1") === true, "AI interval: pesan pertama diizinkan");
+    assert(allowAiReply("wa:user:u1") === false, "AI interval: pesan kedua < 5 detik → ditolak");
+    await new Promise((r) => setTimeout(r, 5100));
+    assert(allowAiReply("wa:user:u1") === true, "AI interval: setelah 5 detik → diizinkan lagi");
   }
 }
