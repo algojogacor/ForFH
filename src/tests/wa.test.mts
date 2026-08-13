@@ -4,6 +4,9 @@ import { drizzle } from "drizzle-orm/libsql";
 import { and, eq } from "drizzle-orm";
 import * as dbSchema from "../lib/db/schema";
 import { WaSessionStore } from "../lib/wa/session-store";
+import { classifyDisconnect, nextBackoffDelayMs, WaClientManager, waKeepAlive } from "../lib/wa/client-manager";
+import { computeHealth, getHealthIndicators, resetHealthForTests } from "../lib/wa/health";
+import type { WaHealthIndicators } from "../lib/wa/types";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
 const MEM_DDL = [
@@ -143,5 +146,134 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     await memDb.insert(dbSchema.appConfig).values({ key: "wa_creds", value: "corrupt!" });
     const corrupted = await store.loadAuthState();
     assert(!corrupted.creds.me, "creds korup → initAuthCreds() baru (fallback)");
+  }
+
+  // ===== F1 — Health model (pure) =====
+  {
+    const base: WaHealthIndicators = {
+      socketState: "open", lastConnectionUpdate: Date.now() - 1000, lastMessageEvent: Date.now() - 1000,
+      lastSendAttempt: Date.now() - 1000, lastSuccessfulSend: Date.now() - 1000,
+      lastSuccessfulReceive: Date.now() - 1000, lastAuthPersistence: Date.now() - 1000,
+      failedSendAttempts: 0, authInvalid: false,
+    };
+    assert(computeHealth({ ...base }) === "healthy", "open + event baru → healthy");
+    const silent: WaHealthIndicators = { ...base, lastMessageEvent: Date.now() - 20 * 60_000, lastSuccessfulReceive: Date.now() - 20 * 60_000 };
+    assert(computeHealth(silent) === "possibly_silent", "open + tak ada inbound >15 mnt → possibly_silent (BUKAN unhealthy)");
+    const degraded: WaHealthIndicators = { ...base, failedSendAttempts: 3 };
+    assert(computeHealth(degraded) === "degraded", "open + 3 kiriman gagal beruntun → degraded");
+    assert(computeHealth({ ...base, socketState: "reconnecting" }) === "disconnected", "socket tidak open → disconnected");
+    assert(computeHealth({ ...base, authInvalid: true }) === "auth_invalid", "flag auth invalid → auth_invalid");
+    // Segar open tanpa pesan masuk: berbasis lastConnectionUpdate → sehat (tanpa false alarm langsung)
+    assert(computeHealth({ ...base, lastMessageEvent: null, lastSuccessfulReceive: null, lastConnectionUpdate: Date.now() - 60_000 }) === "healthy",
+      "baru open + belum ada pesan → healthy (bukan mungkin_silent instan)");
+  }
+
+  // ===== F1 — classifyDisconnect pure (matriks A4) =====
+  {
+    assert(classifyDisconnect(408) === "temporary", "408 connectionLost/timedOut → temporary");
+    assert(classifyDisconnect(428) === "temporary", "428 connectionClosed → temporary");
+    assert(classifyDisconnect(515) === "restart", "515 restartRequired → restart");
+    assert(classifyDisconnect(401) === "logged_out", "401 loggedOut → logged_out");
+    assert(classifyDisconnect(440) === "replaced", "440 connectionReplaced → replaced");
+    assert(classifyDisconnect(500) === "bad_session", "500 badSession → bad_session");
+    assert(classifyDisconnect(411) === "mismatch", "411 multideviceMismatch → mismatch");
+    assert(classifyDisconnect(403) === "forbidden", "403 forbidden → forbidden");
+    assert(classifyDisconnect(503) === "unavailable", "503 unavailableService → unavailable");
+    assert(classifyDisconnect(undefined) === "unknown", "tanpa error → unknown");
+
+    // Backoff: min 1s, max 60s, jitter ±20% (A3)
+    const d1 = nextBackoffDelayMs(1);
+    assert(d1 >= 800 && d1 <= 1200, "backoff attempt 1 dalam 0.8–1.2s (base 1s ±20%)");
+    const d10 = nextBackoffDelayMs(10);
+    assert(d10 >= 48_000 && d10 <= 72_000, "backoff attempt 10 terkunci di 60s ±20% (cap)");
+  }
+
+  // ===== F1 — Socket manager (Baileys di-mock) =====
+  {
+    interface FakeSocket {
+      ev: { on: (ev: string, cb: (p: any) => void) => void };
+      sendMessage: () => Promise<any>;
+      requestPairingCode: () => Promise<string>;
+      end: (err?: Error) => void;
+      handlers: Record<string, (p: any) => void>;
+    }
+    function makeFakeSocket(): FakeSocket {
+      const handlers: Record<string, (p: any) => void> = {};
+      return {
+        handlers,
+        ev: { on: (ev, cb) => { handlers[ev] = cb; } },
+        sendMessage: async () => ({}),
+        requestPairingCode: async () => "ABC-DEF",
+        end: () => {},
+      };
+    }
+    async function makeManager(opts: { onClose?: (p: any) => void }) {
+      let callCount = 0;
+      let authInvalid = false;
+      const sockets: FakeSocket[] = [];
+      const manager = new WaClientManager({
+        makeSocket: (() => { callCount++; const s = makeFakeSocket(); sockets.push(s); return s; }) as any,
+        loadAuth: async () => ({ creds: { me: { id: "62812@lid" }, registered: false } as any, keys: {} as any }),
+        persistCreds: async () => {},
+        readAuthFlag: async () => authInvalid,
+        persistAuthFlag: async (v) => { authInvalid = v; },
+        scheduleTimer: (fn) => { fn(); }, // fire langsung (deterministik untuk tes)
+      });
+      manager.on("close", opts.onClose ?? (() => {}));
+      return { manager, sockets, getCallCount: () => callCount };
+    }
+
+    // ensureWaClient idempoten: 3× berurutan → 1 socket
+    const m1 = await makeManager({});
+    await Promise.all([m1.manager.ensureWaClient(), m1.manager.ensureWaClient(), m1.manager.ensureWaClient()]);
+    assert(m1.getCallCount() === 1, "ensureWaClient 3× berurutan → tepat 1 socket (shared startup promise)");
+    // saat state connecting (startup promise aktif) — panggilan lagi → tetap 1 socket
+    assert(m1.getCallCount() === 1, "panggilan saat connecting → shared promise, bukan socket baru");
+
+    // connect → open; temporary disconnect (408) → reconnect (backoff, 2 socket)
+    const m2 = await makeManager({});
+    await m2.manager.ensureWaClient();
+    m2.sockets[0].handlers["connection.update"]({ connection: "open" });
+    assert(m2.manager.state === "open" && m2.manager.isReady(), "connect → state open");
+    m2.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 408 } } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(m2.getCallCount() === 2, "disconnect temporary (408) → reconnect via backoff");
+    assert(m2.manager.fatalReason === null, "temporary → fatalReason tetap null");
+
+    // loggedOut (401) → stop + auth invalid; TANPA recreate
+    const m3 = await makeManager({});
+    await m3.manager.ensureWaClient();
+    m3.sockets[0].handlers["connection.update"]({ connection: "open" });
+    m3.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 401 } } });
+    assert(m3.manager.state === "logged_out" && m3.manager.fatalReason === "auth_invalid", "loggedOut (401) → state logged_out + fatal");
+    assert(m3.getCallCount() === 1, "loggedOut → TIDAK auto-recreate");
+    const keep3 = await waKeepAlive(m3.manager);
+    assert(keep3 === "auth-invalid", "waKeepAlive saat auth invalid → auth-invalid (tanpa recreate)");
+
+    // connectionReplaced (440) → stop, TIDAK reconnect
+    const m4 = await makeManager({});
+    await m4.manager.ensureWaClient();
+    m4.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 440 } } });
+    assert(m4.manager.state === "error" && m4.manager.fatalReason === "replaced", "connectionReplaced (440) → stop tanpa reconnect");
+    assert(m4.getCallCount() === 1, "connectionReplaced → 1 socket saja");
+
+    // restartRequired (515) → recreate (auth sama)
+    const m5 = await makeManager({});
+    await m5.manager.ensureWaClient();
+    m5.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 515 } } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(m5.getCallCount() === 2, "restartRequired (515) → recreate socket");
+
+    // waKeepAlive: open → healthy; dead → ensure (recovered)
+    const m6 = await makeManager({});
+    assert((await waKeepAlive(m6.manager)) === "connecting", "waKeepAlive saat belum ada socket → ensure → state");
+    m6.sockets[0].handlers["connection.update"]({ connection: "open" });
+    assert((await waKeepAlive(m6.manager)) === "healthy", "waKeepAlive saat open → healthy");
+
+    // creds.update → persist + health lastAuthPersistence
+    resetHealthForTests();
+    m6.sockets[0].handlers["creds.update"]({ me: { id: "62812@lid" }, registered: true } as any);
+    await new Promise((r) => setTimeout(r, 5));
+    assert(getHealthIndicators().lastAuthPersistence !== null, "creds.update → lastAuthPersistence tercatat");
   }
 }
