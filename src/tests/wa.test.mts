@@ -10,7 +10,8 @@ import type { WaHealthIndicators } from "../lib/wa/types";
 import { normalizePhone, maskPhone } from "../lib/wa/normalize";
 import { collectCandidateJids, resolveWhatsAppIdentity, resolveWhatsAppTarget } from "../lib/wa/identity";
 import type { WaBindingRow } from "../lib/wa/types";
-import { parseCommand } from "../lib/wa/commands";
+import { dispatchCommand, parseCommand } from "../lib/wa/commands";
+import type { CommandExecutorDeps } from "../lib/wa/commands";
 import { formatJadwal, formatTugas, formatHelp, clampOutput, formatNotLinked } from "../lib/wa/format";
 import { waRateLimitKey, allowAiReply, resetAiReplyForTests } from "../lib/wa/rate-limit";
 import { processIncomingMessage } from "../lib/wa/pipeline";
@@ -142,6 +143,12 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     const restored2 = await store2.get("lid-mapping", ["lidB"]);
     const tc2 = await store2.get("tctoken", ["628333"]) as any;
     assert(restored2["lidB"] === "628333" && Buffer.isBuffer(tc2["628333"]?.token), "restart: store baru dari data sama → mapping & tctoken utuh");
+
+    // "restart" creds: instance store baru → loadAuthState() restore creds
+    // (proses restart = creds di-load dari DB, bukan dari memori instance)
+    const store3 = new WaSessionStore(memDb);
+    const c3 = await store3.loadAuthState();
+    assert(c3.creds.me?.id === "62812@lid", "restart: creds round-trip utuh via loadAuthState (tanpa scan ulang)");
 
     // total: nilai undefined tidak disimpan (tanpa guard → "j:undefined"
     // yang gagal di-decode, baris sampah tertinggal)
@@ -369,6 +376,37 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     // collectCandidateJids dedupe + urutan
     const jids = collectCandidateJids({ participant: "a@lid", remoteJid: "a@lid", participantAlt: "b@s.whatsapp.net" } as any);
     assert(jids.length === 2 && jids[0] === "a@lid" && jids[1] === "b@s.whatsapp.net", "kandidat jid dedupe + urut participant > remoteJid > alternates");
+
+    // backfill non-destruktif: match via phone, lid kosong → patch lid dikirim
+    let backfillPatch: any = null;
+    const depsBf = {
+      ...deps,
+      findBindingByLid: async () => null,
+      findBindingByPhone: async (p: string) => (p === "628111111111" ? ({ id: "b3", userId: "u3", phone: "628111111111", lid: null, jid: null, status: "active", otpCode: null, otpExpiresAt: null, otpAttempts: 0, createdAt: "", updatedAt: "" } as WaBindingRow) : null),
+      backfillBinding: async (_id: string, patch: any) => { backfillPatch = patch; },
+    };
+    const resBf = await resolveWhatsAppIdentity({ remoteJid: "lidA@lid" } as any, depsBf);
+    assert(resBf.userId === "u3" && backfillPatch?.lid === "lidA", "backfill binding: lid diisi saat binding lama hanya punya phone");
+
+    // mapping refresh: getPNForLID dipanggil ulang per resolve (tanpa cache
+    // hasil lama) → mapping baru dipakai di lookup binding berikutnya
+    let pnNow = "628111111111";
+    const depsMr = {
+      getPNForLID: async () => pnNow,
+      findBindingByLid: async () => null,
+      findBindingByJid: async () => null,
+      findBindingByPhone: async (p: string): Promise<WaBindingRow | null> => {
+        if (p === "628111111111") return b1;
+        if (p === "628222222222") return b2;
+        return null;
+      },
+      backfillBinding: async () => {},
+    };
+    const mr1 = await resolveWhatsAppIdentity({ remoteJid: "lidA@lid" } as any, depsMr);
+    assert(mr1.identity.phone === "628111111111" && mr1.userId === "u1", "mapping refresh: resolve pertama memakai mapping saat ini");
+    pnNow = "628222222222";
+    const mr2 = await resolveWhatsAppIdentity({ remoteJid: "lidA@lid" } as any, depsMr);
+    assert(mr2.identity.phone === "628222222222" && mr2.userId === "u2", "mapping refresh: resolve ulang memakai hasil getPNForLID baru (tanpa cache)");
   }
 
   // ===== F1 — resolveWhatsAppTarget (D2: prefer LID, JANGAN ${lid}@s.whatsapp.net) =====
@@ -391,6 +429,30 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(c4.command === "unknown", "perintah tak dikenal → unknown (dispatcher → !help singkat)");
     const c5 = parseCommand("halo");
     assert(c5.command === "unknown", "tanpa prefix ! → unknown (jalur AI)");
+  }
+
+  // ===== F1 — Dispatcher C3: switch → executor per perintah; unknown → !help singkat =====
+  {
+    const exec: CommandExecutorDeps = {
+      jadwal: async (_u, a) => `J:${a}`,
+      tugas: async (_u, a) => `T:${a}`,
+      selesai: async (_u, a) => `S:${a}`,
+      nilai: async () => "N",
+      insight: async () => "I",
+      hubungkan: async () => "H",
+      putuskan: async (_u, a) => `P:${a}`,
+      help: (long) => (long ? "HELP-LONG" : "HELP-SHORT"),
+    };
+    assert((await dispatchCommand("jadwal", "besok", exec)) === "J:besok", "dispatcher: !jadwal → executor jadwal (args diteruskan)");
+    assert((await dispatchCommand("tugas", "progres", exec)) === "T:progres", "dispatcher: !tugas → executor tugas");
+    assert((await dispatchCommand("selesai", "3", exec)) === "S:3", "dispatcher: !selesai → executor selesai");
+    assert((await dispatchCommand("nilai", "", exec)) === "N", "dispatcher: !nilai → executor nilai");
+    assert((await dispatchCommand("insight", "", exec)) === "I", "dispatcher: !insight → executor insight");
+    assert((await dispatchCommand("hubungkan", "", exec)) === "H", "dispatcher: !hubungkan → executor hubungkan");
+    assert((await dispatchCommand("putuskan", "ya", exec)) === "P:ya", "dispatcher: !putuskan → executor putuskan (args diteruskan)");
+    assert((await dispatchCommand("menu", "", exec)) === "HELP-LONG", "dispatcher: !menu → help panjang");
+    assert((await dispatchCommand("help", "", exec)) === "HELP-LONG", "dispatcher: !help → help panjang");
+    assert((await dispatchCommand("unknown", "", exec)) === "HELP-SHORT", "dispatcher: perintah unknown → !help singkat");
   }
 
   // ===== F1 — formatter (pure) =====
