@@ -17,6 +17,7 @@ import { processIncomingMessage } from "../lib/wa/pipeline";
 import type { MessageDeps } from "../lib/wa/pipeline";
 import { WaSendService } from "../lib/wa/send";
 import { decideDeliveryChannel } from "../lib/notifications/worker";
+import { nextPairingState } from "../lib/wa/pairing";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
 const MEM_DDL = [
@@ -518,5 +519,18 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(decideDeliveryChannel(false, 2) === "web_push", "WA gagal + push sukses → fallback web_push");
     assert(decideDeliveryChannel(false, 0) === "none", "WA gagal + tanpa push → none");
     assert(decideDeliveryChannel(true, 0) === "whatsapp", "WA sukses → TIDAK dobel kirim web push");
+  }
+
+  // ===== F1 — Pairing state machine (pure, A7) =====
+  {
+    assert(nextPairingState("pairing_not_started", "request") === "pairing_code_requested", "start → request → code_requested");
+    assert(nextPairingState("pairing_code_requested", "code_received") === "waiting_for_phone", "code_received → waiting_for_phone");
+    assert(nextPairingState("waiting_for_phone", "linked") === "pairing_success", "linked → pairing_success");
+    assert(nextPairingState("waiting_for_phone", "expired") === "pairing_failed", "expired → pairing_failed");
+    assert(nextPairingState("waiting_for_phone", "timeout_408") === "pairing_failed", "408 selama menunggu → pairing_failed");
+    assert(nextPairingState("waiting_for_phone", "logged_out_401") === "pairing_failed", "401 selama menunggu → pairing_failed");
+    assert(nextPairingState("pairing_failed", "request") === "pairing_code_requested", "failed → request (minta kode baru)");
+    assert(nextPairingState("pairing_success", "request") === "pairing_code_requested", "re-pair dari success → request");
+    assert(nextPairingState("pairing_success", "linked") === "pairing_success", "event tak relevan → state tetap");
   }
 }
