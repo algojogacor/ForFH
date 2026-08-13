@@ -5,6 +5,7 @@ import { runDriveTests } from "./drive.test";
 import { runPasalTests } from "./pasal.test";
 import { runReminderTests } from "./reminders.test";
 import { runCampusTests } from "./campus.test";
+import { runPerfTests } from "./perf.test";
 
 async function main() {
   console.log("=================================================");
@@ -32,6 +33,7 @@ async function main() {
     await runPasalTests(assert);
     await runReminderTests(assert);
     await runCampusTests(assert);
+    await runPerfTests(assert);
   } catch (err) {
     console.error("Critical test execution failure:", err);
     process.exit(1);
