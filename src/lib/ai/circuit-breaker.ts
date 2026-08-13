@@ -1,4 +1,7 @@
 import { AIProviderName, AIAccountSlot, SlotHealth } from "./types";
+import { db, appConfig } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { logger } from "@/lib/logger";
 
 // In-memory slot state tracker
 const slotStates: Record<string, SlotHealth> = {
@@ -78,6 +81,21 @@ export function recordSlotFailure(
       health.cooldownUntil = Date.now() + 15 * 1000;
     }
   }
+
+  if (health.state === "COOLDOWN") {
+    // Persist cooldown — tidak hilang saat redeploy (fire-and-forget).
+    // Builder update bisa di-await langsung (thenable → ResultSet libsql
+    // punya `.rowsAffected`; pola yang sama dengan sync.ts).
+    db.update(appConfig)
+      .set({ value: String(health.cooldownUntil), updatedAt: new Date() })
+      .where(eq(appConfig.key, `ai_slot_cooldown:${key}`))
+      .then(async (r) => {
+        if (r.rowsAffected === 0) {
+          await db.insert(appConfig).values({ key: `ai_slot_cooldown:${key}`, value: String(health.cooldownUntil) });
+        }
+      })
+      .catch(() => {});
+  }
 }
 
 export function getSlotStatus(): Record<string, SlotHealth> {
@@ -87,6 +105,30 @@ export function getSlotStatus(): Record<string, SlotHealth> {
 export function resetAllSlots(): void {
   for (const key of Object.keys(slotStates)) {
     slotStates[key] = { state: "HEALTHY", cooldownUntil: 0, failureCount: 0 };
+  }
+}
+
+// Muat cooldown tersimpan (app_config) ke slotStates — jalankan sekali saat server jalan
+let cooldownsLoaded = false;
+export async function loadPersistedCooldowns(): Promise<void> {
+  if (cooldownsLoaded) return;
+  cooldownsLoaded = true;
+  try {
+    const rows = await db.select().from(appConfig);
+    for (const row of rows) {
+      if (!row.key.startsWith("ai_slot_cooldown:")) continue;
+      const key = row.key.replace("ai_slot_cooldown:", "");
+      const health = slotStates[key];
+      if (!health) continue;
+      health.cooldownUntil = Number(row.value) || 0;
+      // Restore state juga, bukan hanya timestamp: isSlotAvailable hanya
+      // menegakkan cooldown saat state === "COOLDOWN".
+      if (health.cooldownUntil > Date.now()) {
+        health.state = "COOLDOWN";
+      }
+    }
+  } catch (e: any) {
+    logger.warn(`loadPersistedCooldowns: ${e?.message || e}`);
   }
 }
 

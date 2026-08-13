@@ -4,6 +4,7 @@ import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { AICallOptions, AIResult } from "./types";
 import { getNextGroqSlot, callGroq } from "./groq";
 import { getNextOllamaSlot, callOllama } from "./ollama";
+import { loadPersistedCooldowns } from "./circuit-breaker";
 
 // Batas total seluruh rantai fallback — jangan biarkan request > 35 detik
 const TOTAL_DEADLINE_MS = 35_000;
@@ -13,6 +14,9 @@ const AI_RATE_LIMIT = { maxAttempts: 30, windowMs: 60 * 60 * 1000 };
 export async function executeAIRequest<T = any>(options: AICallOptions): Promise<AIResult<T>> {
   const deadline = Date.now() + TOTAL_DEADLINE_MS;
   const pastDeadline = () => Date.now() > deadline;
+
+  // Muat cooldown persisten dari app_config (idempoten — sekali baca per proses)
+  await loadPersistedCooldowns();
 
   // Gate per-user: rate limit + toggle AI (server-side, tidak hanya UI)
   if (options.userId) {

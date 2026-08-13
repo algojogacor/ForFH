@@ -5,7 +5,11 @@ import { Plus, Search, ArrowLeft, Loader2, Check } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { NoteCard } from "@/components/notes/NoteCard";
-import { MarkdownEditor } from "@/components/notes/MarkdownEditor";
+import dynamic from "next/dynamic";
+const MarkdownEditor = dynamic(
+  () => import("@/components/notes/MarkdownEditor").then((m) => m.MarkdownEditor),
+  { ssr: false, loading: () => <div className="h-40 animate-pulse rounded-lg bg-muted" /> }
+);
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { invalidateClientCache } from "@/lib/client-cache";
