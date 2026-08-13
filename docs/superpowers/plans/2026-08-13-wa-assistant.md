@@ -65,7 +65,7 @@ Baru:
   src/app/api/wa/status/route.ts  src/app/api/wa/otp/request/route.ts  src/app/api/wa/otp/verify/route.ts
   src/app/api/wa/unlink/route.ts  src/app/api/wa/pairing/route.ts
   src/components/wa/WhatsAppCard.tsx
-  src/tests/wa.test.ts
+  src/tests/wa.test.mts
   docs/WA_ACCEPTANCE.md           — checklist acceptance F2 (dibuat Task 8)
 
 Diubah:
@@ -78,7 +78,7 @@ Diubah:
   src/lib/notifications/worker.ts — sendReminder + decideDeliveryChannel
   src/app/api/internal/reminders/process/route.ts — panggil waKeepAlive()
   src/app/pengaturan/page.tsx     — pasang WhatsAppCard
-  src/tests/run-tests.ts          — registrasi runWaTests
+  src/tests/run-tests.mts          — registrasi runWaTests
   docs/BUILD_STATUS.md            — catatan versi Baileys rc14
 ```
 
@@ -92,7 +92,7 @@ Diubah:
 - Create: `src/lib/db/migrations/0004_*.sql` (via `npm run db:generate`)
 - Modify: `src/lib/db/init.ts` (mirror DDL dev)
 - Modify: `src/lib/env.ts`, `.env.example`
-- Create: `src/tests/wa.test.ts` (skeleton ESM gate) + Modify `src/tests/run-tests.ts`
+- Create: `src/tests/wa.test.mts` (skeleton ESM gate) + Modify `src/tests/run-tests.mts`
 - Modify: `docs/BUILD_STATUS.md`
 
 **Interfaces:**
@@ -108,7 +108,7 @@ Verify: `grep '"@whiskeysockets/baileys"' package.json` → `"@whiskeysockets/ba
 
 - [ ] **Step 2: ESM gate test (failing test dulu)**
 
-`src/tests/wa.test.ts`:
+`src/tests/wa.test.mts`:
 
 ```ts
 import { makeWASocket } from "@whiskeysockets/baileys";
@@ -122,7 +122,7 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
 }
 ```
 
-`src/tests/run-tests.ts`: tambah `import { runWaTests } from "./wa.test";` dan panggil `await runWaTests(assert);` setelah `runPerfTests(assert)`.
+`src/tests/run-tests.mts`: tambah `import { runWaTests } from "./wa.test.mts";` dan panggil `await runWaTests(assert);` setelah `runPerfTests(assert)`.
 
 - [ ] **Step 3: Run untuk memastikan ESM gate hijau**
 
@@ -243,7 +243,7 @@ Run `npm run db:migrate` (DB lokal `forfh-local.db`; env Turso tidak perlu inlin
 Run: `npm run typecheck` → 0 error; `npm test` → ESM gate + 176 existing hijau.
 
 ```bash
-git add package.json package-lock.json src/lib/db/schema.ts src/lib/db/init.ts src/lib/db/migrations src/lib/env.ts .env.example src/tests/wa.test.ts src/tests/run-tests.ts docs/BUILD_STATUS.md
+git add package.json package-lock.json src/lib/db/schema.ts src/lib/db/init.ts src/lib/db/migrations src/lib/env.ts .env.example src/tests/wa.test.mts src/tests/run-tests.mts docs/BUILD_STATUS.md
 git commit -m "feat: wa-assistant — pin baileys rc14, migrasi 0004 wa_bindings & wa_signal_keys"
 ```
 
@@ -254,7 +254,7 @@ git commit -m "feat: wa-assistant — pin baileys rc14, migrasi 0004 wa_bindings
 **Files:**
 - Create: `src/lib/wa/types.ts`
 - Create: `src/lib/wa/session-store.ts`
-- Test: `src/tests/wa.test.ts` (section auth-state)
+- Test: `src/tests/wa.test.mts` (section auth-state)
 
 **Interfaces:**
 - Consumes: `schema.appConfig`, `schema.waSignalKeys` (Task 1); `encryptText/decryptText` (`@/lib/crypto/at-rest`).
@@ -436,7 +436,7 @@ Catatan implementasi: pastikan `initAuthCreds` diekspor rc14 (`npm ls` menunjuk 
 
 - [ ] **Step 4: Test auth-state (failing test — libsql `:memory:`)**
 
-**Imports — tambahkan di header `src/tests/wa.test.ts`** (import hanya boleh top-level file, JANGAN di dalam fungsi):
+**Imports — tambahkan di header `src/tests/wa.test.mts`** (import hanya boleh top-level file, JANGAN di dalam fungsi):
 
 ```ts
 import { createClient } from "@libsql/client";
@@ -517,7 +517,7 @@ Lalu di dalam `runWaTests`, blok auth-state:
   }
 ```
 
-Tambahkan import `eq` dari `drizzle-orm` di wa.test.ts.
+Tambahkan import `eq` dari `drizzle-orm` di wa.test.mts.
 
 - [ ] **Step 5: Run test — hijau + typecheck**
 
@@ -526,7 +526,7 @@ Run: `npm test` → assert auth-state 7× PASS + ESM gate. `npm run typecheck` �
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/lib/wa/types.ts src/lib/wa/session-store.ts src/tests/wa.test.ts
+git add src/lib/wa/types.ts src/lib/wa/session-store.ts src/tests/wa.test.mts
 git commit -m "feat: wa session-store — SignalKeyStore adapter Turso terenkripsi + tes auth-state"
 ```
 
@@ -538,7 +538,7 @@ git commit -m "feat: wa session-store — SignalKeyStore adapter Turso terenkrip
 - Create: `src/lib/wa/client-manager.ts`
 - Create: `src/lib/wa/health.ts`
 - Modify: `src/app/api/internal/reminders/process/route.ts` (panggil `waKeepAlive`)
-- Test: `src/tests/wa.test.ts` (section socket manager + health + classifyDisconnect)
+- Test: `src/tests/wa.test.mts` (section socket manager + health + classifyDisconnect)
 
 **Interfaces:**
 - Consumes: `WaSessionStore` (Task 2), `types.ts` (Task 2), `appConfig` (flag auth invalid), logger, db.
@@ -546,7 +546,7 @@ git commit -m "feat: wa session-store — SignalKeyStore adapter Turso terenkrip
 
 - [ ] **Step 1: health.ts (failing test dulu — computeHealth pure)**
 
-**Imports (header wa.test.ts — import dilarang di dalam fungsi):** `import { computeHealth, resetHealthForTests, getHealthIndicators } from "../lib/wa/health";` dan `import type { WaHealthIndicators } from "../lib/wa/types";`
+**Imports (header wa.test.mts — import dilarang di dalam fungsi):** `import { computeHealth, resetHealthForTests, getHealthIndicators } from "../lib/wa/health";` dan `import type { WaHealthIndicators } from "../lib/wa/types";`
 
 ```ts
   // ===== F1 — Health model (pure) =====
@@ -1128,7 +1128,7 @@ Dan tambahkan `waKeepalive` ke response JSON.
 Run: `npm test` (semua assert baru hijau), `npm run typecheck`.
 
 ```bash
-git add src/lib/wa/client-manager.ts src/lib/wa/health.ts src/app/api/internal/reminders/process/route.ts src/tests/wa.test.ts
+git add src/lib/wa/client-manager.ts src/lib/wa/health.ts src/app/api/internal/reminders/process/route.ts src/tests/wa.test.mts
 git commit -m "feat: wa client-manager — state machine, disconnect matrix, keepalive + health 5 level"
 ```
 
@@ -1138,7 +1138,7 @@ git commit -m "feat: wa client-manager — state machine, disconnect matrix, kee
 
 **Files:**
 - Create: `src/lib/wa/identity.ts`, `src/lib/wa/normalize.ts`, `src/lib/wa/format.ts`, `src/lib/wa/commands.ts`, `src/lib/wa/rate-limit.ts`
-- Test: `src/tests/wa.test.ts` (identity resolver + target + normalize + format + parser + rate-limit key)
+- Test: `src/tests/wa.test.mts` (identity resolver + target + normalize + format + parser + rate-limit key)
 
 **Interfaces:**
 - Consumes: `types.ts` (WaIdentity, WaBindingRow); `db` + `waBindings`; `checkRateLimit` (`@/lib/auth/rate-limit`); Baileys utils `isLidUser/isPnUser/jidDecode`.
@@ -1147,7 +1147,7 @@ git commit -m "feat: wa client-manager — state machine, disconnect matrix, kee
 
 - [ ] **Step 1: Test normalize + identity (failing)**
 
-**Imports (header wa.test.ts):**
+**Imports (header wa.test.mts):**
 
 ```ts
 import { normalizePhone, maskPhone } from "../lib/wa/normalize";
@@ -1566,7 +1566,7 @@ export function resetAiReplyForTests(): void { aiLastReply.clear(); }
 Run: `npm test` + `npm run typecheck` (assert baru hijau semua).
 
 ```bash
-git add src/lib/wa/identity.ts src/lib/wa/normalize.ts src/lib/wa/format.ts src/lib/wa/commands.ts src/lib/wa/rate-limit.ts src/tests/wa.test.ts
+git add src/lib/wa/identity.ts src/lib/wa/normalize.ts src/lib/wa/format.ts src/lib/wa/commands.ts src/lib/wa/rate-limit.ts src/tests/wa.test.mts
 git commit -m "feat: wa identity resolver PN/LID + normalize, format, commands parser, rate-limit — tes pure"
 ```
 
@@ -1578,7 +1578,7 @@ git commit -m "feat: wa identity resolver PN/LID + normalize, format, commands p
 - Create: `src/lib/wa/executors/jadwal.ts`, `executors/tugas.ts`, `executors/selesai.ts`, `executors/nilai.ts`, `executors/insight.ts`, `executors/putuskan.ts`
 - Create: `src/lib/wa/ai.ts`, `src/lib/wa/send.ts`, `src/lib/wa/pipeline.ts`
 - Modify: `src/lib/wa/commands.ts` (tambah `dispatchCommand`, `buildExecutorDeps`, `CommandExecutorDeps`)
-- Test: `src/tests/wa.test.ts` (pipeline messaging + security + dispatcher decision + send queue)
+- Test: `src/tests/wa.test.mts` (pipeline messaging + security + dispatcher decision + send queue)
 
 **Interfaces:**
 - Consumes: formatter set (Task 4), `parseCommand` (Task 4), `resolveWhatsAppIdentity`/`createIdentityDeps` (Task 4), `WaClientManager` + `health` (Task 3), `executeAIRequest` (`@/lib/ai/router`), `getCachedAI/setCachedAI` (`@/lib/ai/cache`).
@@ -2214,7 +2214,7 @@ client-manager perlu method `getPNForLID` — tambahkan ke `WaClientManager` (di
 Run: `npm test` + `npm run typecheck` (semua assert hijau). Pastikan `and` ter-import di tugas.ts.
 
 ```bash
-git add src/lib/wa/executors src/lib/wa/ai.ts src/lib/wa/send.ts src/lib/wa/pipeline.ts src/lib/wa/commands.ts src/lib/wa/client-manager.ts src/tests/wa.test.ts
+git add src/lib/wa/executors src/lib/wa/ai.ts src/lib/wa/send.ts src/lib/wa/pipeline.ts src/lib/wa/commands.ts src/lib/wa/client-manager.ts src/tests/wa.test.mts
 git commit -m "feat: wa executors + dispatcher, AI natural language, send queue, pipeline pesan"
 ```
 
@@ -2224,7 +2224,7 @@ git commit -m "feat: wa executors + dispatcher, AI natural language, send queue,
 
 **Files:**
 - Modify: `src/lib/notifications/worker.ts`
-- Test: `src/tests/wa.test.ts` (notification decision pure)
+- Test: `src/tests/wa.test.mts` (notification decision pure)
 
 **Interfaces:**
 - Consumes: `resolveWhatsAppTarget` (Task 4), `getWaSendService` (Task 5), `formatKuliahReminder`/`formatTugasReminder` (Task 4), `waBindings` schema (Task 1).
@@ -2367,7 +2367,7 @@ Refactor blok **task** (ganti blok `sendPushToUser` task + insert):
 Run: `npm test` (176 existing + decision 4× — reminder tests existing tetap hijau), `npm run typecheck`.
 
 ```bash
-git add src/lib/notifications/worker.ts src/tests/wa.test.ts
+git add src/lib/notifications/worker.ts src/tests/wa.test.mts
 git commit -m "feat: wa notifikasi — sendReminder routing WA + fallback web push"
 ```
 
@@ -2380,7 +2380,7 @@ git commit -m "feat: wa notifikasi — sendReminder routing WA + fallback web pu
 - Create: `src/app/api/wa/status/route.ts`, `src/app/api/wa/otp/request/route.ts`, `src/app/api/wa/otp/verify/route.ts`, `src/app/api/wa/unlink/route.ts`, `src/app/api/wa/pairing/route.ts`
 - Create: `src/components/wa/WhatsAppCard.tsx`
 - Modify: `src/app/pengaturan/page.tsx` (render WhatsAppCard)
-- Test: `src/tests/wa.test.ts` (pairing state machine pure)
+- Test: `src/tests/wa.test.mts` (pairing state machine pure)
 
 **Interfaces:**
 - Consumes: `getWaClientManager`/`WaClientManager` (Task 3), `getHealthIndicators`/`computeHealth` (Task 3), `normalizePhone`/`maskPhone` (Task 4), `getWaSendService` (Task 5), `formatOtpMessage` (Task 4), `waBindings` (Task 1).
@@ -2950,7 +2950,7 @@ Catatan: path komponen UI terverifikasi (pengaturan page memakai `@/components/u
 Run: `npm test` (pairing 9× + semua hijau), `npm run typecheck`, `npm run lint`.
 
 ```bash
-git add src/lib/wa/pairing.ts src/app/api/wa src/components/wa/WhatsAppCard.tsx src/app/pengaturan/page.tsx src/tests/wa.test.ts
+git add src/lib/wa/pairing.ts src/app/api/wa src/components/wa/WhatsAppCard.tsx src/app/pengaturan/page.tsx src/tests/wa.test.mts
 git commit -m "feat: wa route API (status/otp/unlink/pairing) + pairing state machine + WhatsAppCard"
 ```
 
@@ -2959,7 +2959,7 @@ git commit -m "feat: wa route API (status/otp/unlink/pairing) + pairing state ma
 ### Task 8: Tes lengkap F1 + acceptance + verifikasi penuh
 
 **Files:**
-- Test: `src/tests/wa.test.ts` (sweep F1 lengkap)
+- Test: `src/tests/wa.test.mts` (sweep F1 lengkap)
 - Verify: `npm run quality`, `npm run build`, `npm ls`
 
 **Interfaces:**
@@ -2967,7 +2967,7 @@ git commit -m "feat: wa route API (status/otp/unlink/pairing) + pairing state ma
 
 - [ ] **Step 1: Audit cakupan F1 — tambah assert yang kurang**
 
-Periksa `src/tests/wa.test.ts` terhadap 8 kelompok F1 spec; untuk setiap celah tambahkan assert (pola sudah ada di Task 2–7):
+Periksa `src/tests/wa.test.mts` terhadap 8 kelompok F1 spec; untuk setiap celah tambahkan assert (pola sudah ada di Task 2–7):
 
 1. Auth state — 7 assert ✓ (Task 2). Tambahkan bila belum: "restart" round-trip creds (bukan hanya keys): `const store3 = new WaSessionStore(memDb); const c3 = await store3.loadAuthState(); assert(c3.creds.me.id === "62812@lid", ...)`.
 2. Socket manager — ✓ (Task 3).
@@ -2978,7 +2978,7 @@ Periksa `src/tests/wa.test.ts` terhadap 8 kelompok F1 spec; untuk setiap celah t
 7. Pairing — ✓ (Task 7).
 8. Notification — ✓ (Task 6).
 
-Tambahkan assert backfill + creds restart ke wa.test.ts sekarang:
+Tambahkan assert backfill + creds restart ke wa.test.mts sekarang:
 
 ```ts
     // backfill non-destruktif: match via phone, lid kosong → patch lid dikirim
@@ -3034,7 +3034,7 @@ Plus: `npm run quality` hijau, `npm run build` OK, `npm ls` satu versi rc14.
 - [ ] **Step 4: Run + commit**
 
 ```bash
-git add src/tests/wa.test.ts docs/WA_ACCEPTANCE.md
+git add src/tests/wa.test.mts docs/WA_ACCEPTANCE.md
 git commit -m "feat: wa tes F1 lengkap + acceptance checklist + verifikasi build"
 ```
 
