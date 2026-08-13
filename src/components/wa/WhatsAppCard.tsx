@@ -54,8 +54,10 @@ export default function WhatsAppCard() {
     return () => clearInterval(timer);
   }, [fetchStatus]);
 
-  // Semua endpoint WA = POST (termasuk tanpa body — unlink & pairing action);
-  // fetch() default GET tidak akan sampai ke route POST.
+  // OTP & unlink = POST; pairing action = GET (route spec Step 6 — API
+  // contract). fetch() default GET tidak akan sampai ke route POST, dan GET
+  // pairing butuh cache: "no-store" agar tiap klik benar-benar memanggil
+  // server (bukan respons Next.js dari cache).
   async function api(path: string, body?: unknown) {
     setBusy(true); setError(null);
     try {
@@ -64,6 +66,16 @@ export default function WhatsAppCard() {
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Gagal (${res.status})`);
+      return data;
+    } finally { setBusy(false); }
+  }
+
+  async function apiGet(path: string) {
+    setBusy(true); setError(null);
+    try {
+      const res = await fetch(path, { method: "GET", cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Gagal (${res.status})`);
       return data;
@@ -93,7 +105,7 @@ export default function WhatsAppCard() {
 
   async function requestPair() {
     try {
-      const data = await api("/api/wa/pairing?action=request");
+      const data = await apiGet("/api/wa/pairing?action=request");
       setPairCode(data.code ?? null);
       setPairState(data.state);
     } catch (e: any) { setError(e.message); }

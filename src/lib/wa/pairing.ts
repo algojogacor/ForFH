@@ -2,7 +2,7 @@
 // app_config key "wa_pairing" (survive restart). requestPairingCode tetap
 // dipakai, tetapi endpoint pairing TIDAK memanggilnya tanpa state tracking.
 import { eq } from "drizzle-orm";
-import { db, appConfig } from "@/lib/db";
+import { db, appConfig, type DB } from "@/lib/db";
 import type { WaClientManager } from "./client-manager";
 
 export type PairingState =
@@ -39,26 +39,52 @@ export function nextPairingState(current: PairingState, event: PairingEvent): Pa
   }
 }
 
-export async function getPairingState(): Promise<PairingRecord> {
-  const row = await db.select().from(appConfig).where(eq(appConfig.key, PAIRING_KEY)).limit(1).then((r) => r[0]);
+export async function getPairingState(store: DB = db): Promise<PairingRecord> {
+  const row = await store.select().from(appConfig).where(eq(appConfig.key, PAIRING_KEY)).limit(1).then((r) => r[0]);
   if (!row) return { state: "pairing_not_started", updatedAt: 0 };
   try { return JSON.parse(row.value) as PairingRecord; }
   catch { return { state: "pairing_not_started", updatedAt: 0 }; }
 }
 
-export async function setPairingState(rec: PairingRecord): Promise<PairingRecord> {
+export async function setPairingState(rec: PairingRecord, store: DB = db): Promise<PairingRecord> {
   const value = JSON.stringify(rec);
-  await db.insert(appConfig).values({ key: PAIRING_KEY, value })
+  await store.insert(appConfig).values({ key: PAIRING_KEY, value })
     .onConflictDoUpdate({ target: appConfig.key, set: { value } });
   return rec;
 }
 
-let hooksRegistered = false;
+/** A7 — emitor jalur code_received: request sukses → kode diterima → menunggu
+ *  phone. Route memanggil setelah requestPairingCode() berhasil; tanpa emitor
+ *  ini state macet di pairing_code_requested, kode tidak pernah dikembalikan
+ *  ke admin, dan safety-net expiry + hook close 401/408 tidak pernah aktif. */
+export async function markPairingCodeReceived(rec: PairingRecord, store: DB = db): Promise<PairingRecord> {
+  const next = nextPairingState(rec.state, "code_received");
+  if (next === rec.state) return rec;
+  return setPairingState({ ...rec, state: next, updatedAt: Date.now() }, store);
+}
+
+/** Pure — kode hanya ditampilkan saat waiting_for_phone (A7). */
+export function pairingCodeForState(rec: PairingRecord): string | null {
+  return rec.state === "waiting_for_phone" && rec.code ? rec.code : null;
+}
+
+/** Kegagalan request kode (socket tidak siap / requestPairingCode throw):
+ *  state langsung pairing_failed — state machine tidak punya transisi
+ *  request-gagal (failed hanya tercapai saat menunggu phone). */
+export async function failPairing(rec: PairingRecord, store: DB = db): Promise<PairingRecord> {
+  return setPairingState({ ...rec, state: "pairing_failed", updatedAt: Date.now() }, store);
+}
+
+// Flag per-instance (WeakSet), bukan module-level: guard tidak boleh
+// memblokir hooks untuk manager kedua (A1 — deployment = 1 manager, tapi
+// guard tetap per-instance).
+const hookedManagers = new WeakSet<WaClientManager>();
+
 /** Wire transisi via event manager (dipanggil client-manager via import
  *  dinamis saat socket dibuat). pairing_success = open + isNewLogin. */
 export function registerPairingHooks(manager: WaClientManager): void {
-  if (hooksRegistered) return;
-  hooksRegistered = true;
+  if (hookedManagers.has(manager)) return;
+  hookedManagers.add(manager);
   manager.on("open", async ({ isNewLogin }) => {
     const rec = await getPairingState();
     if (isNewLogin && (rec.state === "waiting_for_phone" || rec.state === "pairing_code_requested")) {

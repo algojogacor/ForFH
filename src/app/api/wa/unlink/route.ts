@@ -12,7 +12,9 @@ export async function POST() {
   const binding = await db.query.waBindings.findFirst({ where: eq(waBindings.userId, user.id) });
   if (!binding) return NextResponse.json({ error: "Tidak ada koneksi WhatsApp." }, { status: 404 });
   await db.update(waBindings)
-    .set({ status: "unlinked", otpCode: null, otpExpiresAt: null, otpAttempts: 0, updatedAt: new Date().toISOString() })
+    // lid/jid = transport identity (resolver): dibersihkan saat unlink agar
+    // resolver tidak memetakan nomor yang sudah tidak terhubung (residue)
+    .set({ status: "unlinked", lid: null, jid: null, otpCode: null, otpExpiresAt: null, otpAttempts: 0, updatedAt: new Date().toISOString() })
     .where(eq(waBindings.id, binding.id));
   return NextResponse.json({ success: true });
 }

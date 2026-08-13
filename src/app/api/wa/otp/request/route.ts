@@ -57,8 +57,10 @@ export async function POST(req: NextRequest) {
   }
   const existing = await db.query.waBindings.findFirst({ where: eq(waBindings.userId, user.id) });
   if (existing) {
+    // Re-link: clear lid/jid lama (residue transport identity dari binding
+    // sebelumnya) — resolver hanya memetakan binding aktif
     await db.update(waBindings)
-      .set({ phone, otpCode, otpExpiresAt, otpAttempts: 0, status: "pending", updatedAt: nowIso })
+      .set({ phone, otpCode, otpExpiresAt, otpAttempts: 0, status: "pending", lid: null, jid: null, updatedAt: nowIso })
       .where(eq(waBindings.id, existing.id));
   } else {
     await db.insert(waBindings).values({ id: crypto.randomUUID(), userId: user.id, phone, otpCode, otpExpiresAt, otpAttempts: 0, status: "pending" });

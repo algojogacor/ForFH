@@ -17,7 +17,7 @@ import { processIncomingMessage } from "../lib/wa/pipeline";
 import type { MessageDeps } from "../lib/wa/pipeline";
 import { WaSendService } from "../lib/wa/send";
 import { decideDeliveryChannel } from "../lib/notifications/worker";
-import { nextPairingState } from "../lib/wa/pairing";
+import { nextPairingState, getPairingState, setPairingState, markPairingCodeReceived, failPairing, pairingCodeForState } from "../lib/wa/pairing";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
 const MEM_DDL = [
@@ -532,5 +532,31 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(nextPairingState("pairing_failed", "request") === "pairing_code_requested", "failed → request (minta kode baru)");
     assert(nextPairingState("pairing_success", "request") === "pairing_code_requested", "re-pair dari success → request");
     assert(nextPairingState("pairing_success", "linked") === "pairing_success", "event tak relevan → state tetap");
+  }
+
+  // ===== F1 — Pairing persist + code_received wiring (A7) =====
+  {
+    // Emitor code_received: rantai penuh request → code diterima → menunggu phone
+    assert(
+      nextPairingState(nextPairingState("pairing_not_started", "request"), "code_received") === "waiting_for_phone",
+      "rantai request → code_received → waiting_for_phone (emitor jalur lengkap)"
+    );
+    // Return code (route GET pairing): hanya saat waiting_for_phone
+    assert(pairingCodeForState({ state: "waiting_for_phone", code: "ABCD-EFGH", updatedAt: 1 }) === "ABCD-EFGH", "kode dikembalikan saat waiting_for_phone");
+    assert(pairingCodeForState({ state: "pairing_code_requested", code: "ABCD-EFGH", updatedAt: 1 }) === null, "kode TIDAK dikembalikan saat pairing_code_requested");
+    assert(pairingCodeForState({ state: "pairing_failed", code: "ABCD-EFGH", updatedAt: 1 }) === null, "kode TIDAK dikembalikan saat pairing_failed");
+
+    // Persist round-trip app_config + markPairingCodeReceived/failPairing (memDb)
+    const memDb = await createMemDb();
+    let rec = await setPairingState({ state: "pairing_code_requested", code: "ABCD-EFGH", requestedAt: 123, updatedAt: 1 }, memDb);
+    const loaded = await getPairingState(memDb);
+    assert(loaded.state === "pairing_code_requested" && loaded.code === "ABCD-EFGH" && loaded.requestedAt === 123, "setPairingState → getPairingState round-trip (code + requestedAt persist)");
+    rec = await markPairingCodeReceived(rec, memDb);
+    const after = await getPairingState(memDb);
+    assert(rec.state === "waiting_for_phone" && after.state === "waiting_for_phone" && after.code === "ABCD-EFGH", "markPairingCodeReceived: code_received → waiting_for_phone ter-persist, kode tetap");
+    const kept = await markPairingCodeReceived({ state: "pairing_success", updatedAt: 1 }, memDb);
+    assert(kept.state === "pairing_success", "code_received dari pairing_success → state tetap (event tak relevan)");
+    const failed = await failPairing({ state: "pairing_code_requested", updatedAt: 1 }, memDb);
+    assert(failed.state === "pairing_failed" && (await getPairingState(memDb)).state === "pairing_failed", "failPairing: request gagal → pairing_failed ter-persist");
   }
 }

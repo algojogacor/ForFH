@@ -20,7 +20,9 @@ export async function executePutuskan(userId: string, args: string): Promise<str
   if (!binding) return "Tidak ada koneksi WhatsApp yang aktif.";
   await db
     .update(waBindings)
-    .set({ status: "unlinked", updatedAt: new Date().toISOString() })
+    // lid/jid (transport identity) dibersihkan agar resolver tidak memetakan
+    // nomor yang sudah tidak terhubung (konsisten dengan route unlink)
+    .set({ status: "unlinked", lid: null, jid: null, updatedAt: new Date().toISOString() })
     .where(eq(waBindings.id, binding.id));
   return "🔌 Koneksi WhatsApp diputuskan. Hubungkan lagi kapan saja via Pengaturan.";
 }
