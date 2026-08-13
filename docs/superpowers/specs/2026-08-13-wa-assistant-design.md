@@ -1,143 +1,272 @@
-# ForFH: Asisten WhatsApp (Baileys) — bot, notifikasi, dan binding multi-user
+# ForFH: Asisten WhatsApp (Baileys 7) — bot, notifikasi, dan binding multi-user
 
-Tanggal: 2026-08-13 · Branch: `feat/wa-assistant` · Status: **Disetujui user**
+Tanggal: 2026-08-13 · Branch: `feat/wa-assistant` · Status: **Produk disetujui user; integration layer direvisi sesuai request changes Baileys 7.x (2026-08-13)**
 
 ## Context
 
 - Web push sudah ada, tetapi banyak notif tidak sampai karena browser tidak terbuka.
 - Web app berat dibuka dari HP saat sinyal lemah; chat WhatsApp teks jauh lebih ringan.
 - User menyiapkan **nomor khusus bot** (terpisah dari nomor pribadi) dan ingin multi-user: satu nomor bot sentral, semua pengguna ForFH bisa menghubungkan nomor WA mereka ke akun.
-- Keputusan channel (disetujui user): **Baileys** (`@whiskeysockets/baileys`, protokol WhatsApp Web), dijalankan **di deploy yang sama** dengan web — tanpa proses/deploy terpisah.
+- Keputusan channel (disetujui user): **Baileys** (`@whiskeysockets/baileys`), dijalankan **di deploy yang sama** dengan web — tanpa proses/deploy terpisah.
+- **Revisi integration layer (request changes 2026-08-13)**: implementasi harus kompatibel **Baileys 7.x** — auth-state (`creds` + `keys`/`SignalKeyStore`), identity model **PN/LID**, lifecycle socket ber-state-machine, disconnect classification, dan persistence yang mendukung namespace `lid-mapping`, `device-list`, `tctoken`. Tujuan produk/UX yang sudah disetujui TIDAK berubah.
 
 ## Tujuan (success criteria)
 
-1. Bot WA berjalan di deploy yang sama dengan web, online 24/7 dengan auto-reconnect **tanpa scan QR ulang** (kredensial sesi persist di Turso terenkripsi).
-2. Binding multi-user: nomor WA → akun ForFH via OTP **web-first** (masukkan nomor di Pengaturan → bot kirim kode → verifikasi di web).
+1. Bot WA berjalan di deploy yang sama dengan web, online 24/7 dengan auto-reconnect **tanpa scan QR ulang** (auth state persist di Turso terenkripsi, kompatibel Baileys 7).
+2. Binding multi-user: nomor WA → akun ForFH via OTP **web-first**; `phone` = verification identity, `lid`/`jid` = WhatsApp transport identity.
 3. Asisten chat: perintah `!` (deterministik, instan) + bahasa natural via AI (bebas kuota 30/jam, dengan guard interval 5 detik per pengirim).
-4. Notifikasi reminder (kuliah + deadline tugas) **menggantikan web push** bagi user yang sudah terhubung WA; web push tetap untuk yang belum.
-5. Semua tes hijau (176 + baru), build OK; migrasi 0004 additive — data existing tidak berubah.
+4. Notifikasi reminder (kuliah + deadline tugas) **menggantikan web push** bagi user yang sudah terhubung WA; web push tetap untuk yang belum; fallback otomatis bila WA gagal.
+5. Identity resolution tidak bergantung pada parsing nomor mentah — pipeline memakai resolver PN/LID; mapping LID persist dan dipakai ulang setelah restart.
+6. Socket lifecycle tervalidasi: state machine eksplisit, disconnect classification per `DisconnectReason`, reconnect dengan backoff + jitter (tanpa reconnect storm), dan observability silent-session.
+7. Semua tes hijau (176 + kelompok tes baru), build OK; migrasi 0004 additive — data existing tidak berubah.
 
 ## Non-goals (tidak diimplementasi, dengan alasan)
 
 - CRUD penuh web di chat (catatan markdown, file, eksplorasi perundang-undangan) — tetap di web; UX chat tidak cocok.
 - Pesan grup — diabaikan di MVP (dokumentasikan sebagai batasan).
 - Pembuatan akun ForFH via WA — tetap via login email kampus.
-- Proses/deploy terpisah untuk bot (opsi C) — ditunda sampai benar-benar dibutuhkan.
+- Proses/deploy terpisah untuk bot — ditunda sampai benar-benar dibutuhkan.
 - WhatsApp Cloud API — kandidat fallback bila nomor bot kena pembatasan atau bot tumbuh besar.
+- Horizontal scaling / multi-instance socket — **dilarang untuk MVP** (lihat A7): 1 deployment, 1 instance, 1 socket, 1 bot account.
 
-## A. Arsitektur & koneksi
+## 1. Keputusan dependency & version gate (deliverable: version decision)
 
-### A1. Satu deploy, singleton
+**Keputusan (diverifikasi 2026-08-13):**
 
-`src/lib/wa/client.ts` — singleton (guard `globalThis` untuk dev hot-reload):
-`makeWASocket({ auth, syncFullHistory: false, ... })`. Versi baileys stabil terbaru diverifikasi saat implementasi (context7). Socket berjalan di proses Node yang sama dengan web.
+- Pin **`@whiskeysockets/baileys@7.0.0-rc14`** — dist-tag `latest` npm per 2026-08-13; `legacy` = 6.7.24. rc14 ≥ rc12 (patch keamanan CVE-2026-48063: forged `messages.upsert`, history sync spoofing, app-state corruption). Versi `< 7.0.0-rc12` / `6.7.22` DITOLAK.
+- **Pin exact** di `package.json` (`"@whiskeysockets/baileys": "7.0.0-rc14"`, tanpa `^`/`~`) — build production/dev/CI dijamin versi sama.
+- **Tidak hardcode protocol version WhatsApp** di source code: pakai default `version` yang di-set Baileys 7; hanya override bila verifikasi startup menunjukkan `405` (pola upstream). Jangan menyimpan angka versi WA manual kecuali dokumentasi upstream mengharuskannya.
+- Acceptance: `npm ls @whiskeysockets/baileys` → satu baris rc14, tanpa transitive duplicate; versi dicatat di `docs/` (spec ini + BUILD_STATUS).
+- Konfigurasi socket yang dipakai (dari dokumentasi resmi): `auth` (wajib), `logger`, `markOnlineOnConnect: true`, `syncFullHistory: false`, `shouldIgnoreJid` (guard jid), `keepAliveIntervalMs` default 30_000, `connectTimeoutMs` default 20_000. Verifikasi ulang saat implementasi terhadap typings rc14.
 
-### A2. Lifecycle
+**Fakta API Baileys 7 yang diverifikasi dari dokumentasi resmi (dipakai seluruh spec ini):**
 
-- `ensureWaClient()` — panggil dari: tick QStash existing (`POST /api/internal/reminders/process`), route API WA (`/api/wa/*`), dan event internal. Tidak ada cron baru.
-- Socket dipertahankan hidup 24/7; `connection.update` → reconnect dengan backoff eksponensial (max ~5 menit), hingga terkoneksi.
-- Redeploy/restart Koyeb: socket putus → saat proses baru boot dan tick/route pertama masuk, `ensureWaClient()` restore creds dari Turso → reconnect tanpa interaksi.
+- `AuthenticationState = { creds: AuthenticationCreds; keys: SignalKeyStore }`; `SignalKeyStore` interface: `get(type, ids) → { [id]: value }`, `set(data)` — `null` value = **delete**; ada varian `transaction` (`SignalKeyStoreWithTransaction`).
+- Namespace keystore nyata: `lid-mapping` (nilai string; reverse key `<lid>_reverse` → pn, ditulis dalam transaksi), `tctoken` (nilai `{ token: Buffer, timestamp }`), plus prekeys/sessions/app-state dsb.
+- `DisconnectReason` enum: `connectionClosed=428, connectionLost=408, timedOut=408, connectionReplaced=440, loggedOut=401, badSession=500, restartRequired=515, multideviceMismatch=411, forbidden=403, unavailableService=503`.
+- `connection.update` → `{ connection: 'connecting'|'open'|'close', lastDisconnect: { error?, date }, qr, isNewLogin, isConnected, receivedPendingNotifications }`.
+- Utilitas JID: `jidDecode(jid) → { user, device?, server }`, `isJidUser(jid)`, `isPnUser(jid)` (`@s.whatsapp.net`), `isLidUser(jid)` (`@lid`).
+- `WAMessageKey` memuat field identity: `remoteJid`, `remoteJidAlt`, `remoteJidUsername`, `participant`, `participantAlt`, `participantUsername`, `server_id`, `addressingMode`.
+- LID mapping internal: `LIDMappingStore` (`getLIDForPN(pn)`, `getPNForLID(lid)`, `storeLIDPNMappings`) — cache → DB keystore → USync fallback; `storeTcTokensFromIqResult` / `issuePrivacyTokens` untuk `tctoken`.
+- Pairing: `requestPairingCode(phone)` masih tersedia.
 
-### A3. Persist kredensial sesi
+## 2. A. Arsitektur & koneksi
 
-`src/lib/wa/session-store.ts`:
-- Creds + keys (SignalKeyStore) diserialisasi (pola `BufferJSON` Baileys) → `encryptText` (at-rest.ts, kunci dari SESSION_SECRET) → `app_config` key `wa_creds`.
-- Restore sebelum connect; simpan saat `creds.update` event (jarang, bukan per pesan).
-- Jika `wa_creds` kosong → bot belum pairing → UI menampilkan kode pairing (A5).
+### A1. Satu deploy, satu instance
 
-### A4. Keepalive & health
+`src/lib/wa/client-manager.ts` — **socket manager ber-state-machine** (bukan sekadar singleton):
 
-Tambahkan ke `POST /api/internal/reminders/process` (di samping `processDueReminders`/`syncDueUsers`/`cleanupOldUsage`, diproteksi QStash signature — pola yang sudah ada):
-`await waKeepAlive()` — jika socket tidak aktif → `ensureWaClient()`; selalu return status ringkas. Tanpa jadwal QStash baru.
+```
+stopped → starting → connecting → open
+  ↑          ↓           ↓          ↓
+  │        error       error      closing
+  └────←────┴────←──────┴────←─────┘
+states: stopped | starting | connecting | open | reconnecting | closing | logged_out | error
+```
 
-### A5. Pairing nomor bot (sekali, oleh pemilik)
+- Guard `globalThis` (dev hot-reload) — hanya mencegah duplikat per Node process.
+- **Constraint deployment (wajib didokumentasikan di code)**: 1 deployment = 1 instance = 1 socket = 1 bot account. Horizontal scaling DILARANG (dua instance membaca auth state yang sama lalu login sebagai device yang sama = conflict). Distribusi socket antar instance (distributed lock) = non-goal MVP.
 
-- Sebelum bot connect, `sock.requestPairingCode(phoneBot)` (dari env `WA_BOT_PHONE`) → kode 8 digit (berlaku beberapa menit, regenerate per permintaan).
-- Flow: Pengaturan (pemilik) → tombol "Tampilkan kode" → HP dengan nomor bot: WhatsApp → Perangkat tertaut → Hubungkan perangkat → **"Tautkan dengan nomor telepon saja"** → masukkan kode.
-- Identitas pemilik: `WA_ADMIN_PHONE` env; hanya user yang nomor WA-nya terhubung == `WA_ADMIN_PHONE` yang bisa melihat kode.
-- **Urutan wajib: pairing dulu → baru binding.** OTP dikirim via bot, jadi bot harus online (pairing selesai) sebelum siapa pun — termasuk pemilik — bisa menghubungkan akun. Tidak ada jalur bind tanpa bot online.
-- Setelah connect, `creds.update` tersimpan → scan ulang tidak pernah dibutuhkan lagi.
+### A2. `ensureWaClient()` idempotent
 
-### A6. Runtime
+- Jika state `starting`/`connecting`/`reconnecting` → **return startup promise yang sama** (shared promise disimpan di manager), bukan membuat socket baru.
+- `ensureWaClient()` × N → tepat satu socket aktif. Verifikasi dalam tes (lihat F1).
+- Jika state `open` → no-op.
+- Jika `logged_out`/`error(fatal)` → return status error, TIDAK auto-recreate.
 
-Semua route WA (`/api/wa/*`, `/api/internal/wa/*`): `export const runtime = "nodejs"` — Baileys butuh Node (kriptografi libsignal).
+### A3. Lifecycle & reconnect policy
 
-## B. Data & keamanan
+- Init: `makeWASocket({ auth: loadAuthState(), ... })` — auth dari Turso (section B2).
+- `connection.update`:
+  - `open` → state `open`, catat `lastConnectionUpdate`, `isNewLogin` → simpan creds.
+  - `close` → klasifikasi `lastDisconnect.error` (matriks A4) → state machine.
+- Tidak ada reconnect storm: backoff eksponensial **min 1s, max 60s, jitter ±20%**; batas upaya berurutan 10 → setelah itu tetap mencoba pada cap maksimum hanya bila penyebab temporary, dan selalu setelah state stabil (`reconnecting`, bukan loop ketat).
+- Redeploy Koyeb: socket putus → saat proses baru boot, tick/route pertama memanggil `ensureWaClient()` → restore auth dari Turso → reconnect tanpa interaksi.
 
-### B1. Migrasi 0004 (via `npm run db:generate`, bukan tulis manual)
+### A4. Matriks disconnect (deliverable: disconnect handling matrix)
 
-Tabel `wa_bindings`:
+| `DisconnectReason` (code) | Klasifikasi | Kebijakan |
+|---|---|---|
+| `connectionLost` (408) / `timedOut` (408) / `connectionClosed` (428) | temporary loss | exponential backoff + jitter → reconnect |
+| `restartRequired` (515) | recreate | tutup socket lama → init ulang (auth sama) |
+| `loggedOut` (401) | fatal | **stop auto-reconnect**; tandai auth invalid di DB; UI wajib pairing ulang |
+| `connectionReplaced` (440) | fatal / review | stop; tandai error actionable ("sesi digantikan perangkat lain"); jangan reconnect buta |
+| `badSession` (500) | fatal | tandai auth invalid; surface error actionable (pairing ulang) |
+| `multideviceMismatch` (411) | fatal | log + pairing ulang |
+| `forbidden` (403) | fatal | log; tidak reconnect |
+| `unavailableService` (503) | transient terbatas | backoff, maks 3 upaya; setelah itu stop + log |
+| tidak ada `error` di `lastDisconnect` | unknown | backoff terbatas (sama temporary), log warn |
+
+- `loggedOut` juga menghapus/tidak memakai lagi creds tersimpan (auth invalid flag di app_config `wa_auth_invalid`).
+- `connectionReplaced` tidak pernah auto-reconnect (infinite loop saat device diambil alih = bahaya).
+
+### A5. Keepalive (peran sebenarnya)
+
+`waKeepAlive()` dipanggil dari tick QStash existing (`POST /api/internal/reminders/process`, diproteksi signature — pola existing):
+
+```
+if state == open          → return healthy
+if socket missing/dead    → ensureWaClient()
+if auth invalid           → return auth-invalid (tanpa recreate)
+```
+
+- QStash = **health/recovery trigger**, BUKAN pengganti persistent socket. Tidak pernah recreate socket setiap tick.
+
+### A6. Observability silent-session
+
+Health module `src/lib/wa/health.ts` mencatat (in-memory, diekspos via `GET /api/wa/status`):
+
+```
+socketState | lastConnectionUpdate | lastMessageEvent | lastSendAttempt
+lastSuccessfulSend | lastSuccessfulReceive | lastAuthPersistence
+```
+
+- Tujuan observability, bukan aggressive probing: jika `state == open` tetapi `lastMessageEvent` basi > 15 menit → status `healthy=false, reason:"silent"` di log/status UI.
+- Catatan: connection "terlihat hidup" tetapi `messages.upsert` berhenti adalah insiden yang dilaporkan di 2026 — pencatatan inilah mitigasinya.
+
+### A7. Pairing state machine
+
+`src/lib/wa/pairing.ts` + state dipersist di `app_config` key `wa_pairing` (survive restart):
+
+```
+pairing_not_started → pairing_code_requested → waiting_for_phone
+       ↑                      ↑                        │
+       │                      │                        ├─→ pairing_success (open + isNewLogin)
+       └──────────────────────┴── pairing_failed ←─────┘  (expired / 408 / 401 selama menunggu)
+```
+
+- `sock.requestPairingCode(phoneBot)` **tetap dipakai** (tersedia di Baileys 7), tetapi endpoint pairing TIDAK memanggilnya tanpa state tracking.
+- Jangan asumsikan kode → link pasti berhasil: kasus kode dibuat tetapi linking berakhir `408`/expired (dilaporkan 2026) → state `pairing_failed`, UI menawarkan "Minta kode baru".
+- UI membedakan: `code generated` / `waiting for link` / `linked` / `failed|expired`.
+- `pairing_success` dicapai saat `connection.update` memberi `isNewLogin` atau state `open` + creds tersimpan.
+
+### A8. Runtime & version
+
+- Semua route WA: `export const runtime = "nodejs"` (Baileys butuh Node).
+- `version` WA: default Baileys 7; cek startup log untuk `405`; tanpa hardcode manual.
+
+## 3. B. Data, auth-state storage & keamanan
+
+### B1. Migrasi 0004 (via `npm run db:generate`)
+
+**Tabel `wa_bindings`** (revisi: tambah identity transport):
 
 | kolom | tipe | ket |
 |---|---|---|
 | id | text PK | uuid |
 | userId | text FK users cascade | **UNIQUE** — 1 akun ↔ 1 nomor |
-| phone | text | **UNIQUE** — 1 nomor ↔ 1 akun; format E.164 tanpa `+` (`628…`) |
+| phone | text | **UNIQUE** — verification identity, E.164 tanpa `+` (`628…`) |
+| lid | text null | **UNIQUE** — transport identity (user part `@lid`) |
+| jid | text null | **UNIQUE** — transport JID siap kirim (PN atau LID jid) |
 | status | text default 'pending' | 'pending' \| 'active' \| 'unlinked' |
 | otpCode | text null | sha256 hex |
 | otpExpiresAt | integer null | ms |
 | otpAttempts | integer default 0 | |
 | createdAt / updatedAt | text | `strftime` default (pola repo) |
 
-DDL dev di-`mirror` ke `src/lib/db/init.ts`; migrasi Turso produksi dijalankan saat deploy (pola 0003).
+**Tabel `wa_signal_keys`** (auth-state storage):
 
-### B2. Enkripsi
+| kolom | tipe | ket |
+|---|---|---|
+| type | text | namespace Baileys: `lid-mapping`, `tctoken`, `device-list`, `session-*`, `pre-key-*`, `app-state-*`, dll. |
+| key | text | id dalam namespace |
+| value | text | **terenkripsi** (`encryptText`), base64 JSON/Buffer |
+| updatedAt | text | strftime |
+| PK | | `(type, key)` |
 
-Kredensial sesi bot (`app_config.wa_creds`) dienkripsi `encryptText` (AES-256-GCM, kunci HKDF dari SESSION_SECRET — `crypto/at-rest.ts`). Tidak pernah plaintext. OTP disimpan **hash sha256**, bukan plaintext.
+- Backward compatibility: binding lama `userId + phone` (tanpa lid/jid) tetap valid; lid/jid diisi saat WhatsApp mengirim mapping — **tanpa migrasi destruktif**.
+- DDL dev di-`mirror` ke `src/lib/db/init.ts`; migrasi Turso produksi saat deploy (pola 0003).
 
-### B3. Alur hubungkan (web-first OTP)
+### B2. Auth-state storage design (deliverable: auth-state storage design)
+
+Dua lapis, dipisah secara konseptual (BUKAN satu blob tulis-ulang):
+
+```
+WA auth state
+├── creds        → 1 baris terenkripsi (app_config key `wa_creds`)
+└── keys         → tabel `wa_signal_keys` (namespace, key, value terenkripsi)
+    └── SignalKeyStore adapter: get(type, ids) / set(data) / transaction()
+```
+
+- `src/lib/wa/session-store.ts` mengimplementasikan interface `SignalKeyStore` di atas Turso (via drizzle):
+  - `get(type, ids)` → batch SELECT `WHERE type=? AND key IN (...)`, decrypt, return `{ [id]: value }` (value hilang = tidak ada).
+  - `set(data)` → upsert per `(type, key)`; `value === null` → **DELETE** (semantik Baileys).
+  - `transaction(fn, type)` → pola transaksi keystore (dipakai `lid-mapping`).
+- **Kedua sumber perubahan ditangani**: `creds.update` event → simpan creds; `keys.set/get` dipanggil Baileys sendiri kapan saja (lid-mapping, tctoken, device-list, dsb.) — tidak ada asumsi "creds.update satu-satunya event persistence".
+- Semua data auth **encrypted at rest** (AES-256-GCM, kunci dari SESSION_SECRET — `crypto/at-rest.ts`), termasuk setiap nilai keystore.
+- Acceptance test storage (F1): save/load creds; save/load key; update key → load updated; delete key → absent; "restart" (buat instance baru dari store yang sama) → restore → connect sukses.
+
+### B3. Alur hubungkan (web-first OTP) — revisi
 
 1. Pengaturan → "Hubungkan WhatsApp" → masukkan nomor (`08xx` / `628xx`) → `POST /api/wa/otp/request`
-   - Guard: maks 5 request / 10 menit per user **dan** per nomor — pakai pola tabel `auth_rate_limits` yang dipakai route login existing.
-   - Bot kirim kode 6 digit ke nomor tersebut.
+   - Guard: maks 5 request / 10 menit per user **dan** per nomor — pola `auth_rate_limits` existing.
+   - **OTP baru membatalkan OTP sebelumnya** (overwrite `otpCode`/`otpExpiresAt`, reset `otpAttempts=0`).
+   - Bot kirim kode 6 digit ke nomor tersebut (melalui `resolveWhatsAppTarget`-able binding pending? Tidak — kirim ke raw phone + lid/jid kosong; outbound langsung ke `${phone}@s.whatsapp.net`).
 2. User masukkan kode di web → `POST /api/wa/otp/verify`
-   - `sha256(input) === otpCode` && `now < otpExpiresAt` (10 menit) && `otpAttempts < 3` → status 'active', `otpCode=null`.
+   - `sha256(input) === otpCode` && `now < otpExpiresAt` (10 menit) && `otpAttempts < 3` → status `'active'`; **reset `otpCode=null, otpExpiresAt=null, otpAttempts=0`**.
    - Salah kode → `otpAttempts += 1`; 3× gagal → harus request ulang.
 3. Nomor yang sudah terikat akun lain ditolak (UNIQUE phone); akun yang sudah punya binding aktif ditolak (UNIQUE userId) kecuali `!putuskan` dulu.
+4. Setelah binding aktif, saat WhatsApp mengirim identity mapping (PN/LID) untuk nomor itu → **backfill** `lid`/`jid` di binding (non-destruktif).
 
 ### B4. Guard bot (message pipeline)
 
-- Hanya `messages.upsert` tipe `notify`; pesan non-user (status/broadcast) dan pesan grup diabaikan.
-- Sender belum terhubung (nomor tidak ada di `wa_bindings` status active): balas panduan hubungkan — **maks 1 balasan per sender per jam** (hindari jadi target spam).
-- Rate limit per sender: 20 pesan/menit (in-memory Map, pola mem-cache) → balasan "santai dulu, coba lagi sebentar".
-- AI natural language: **bebas kuota 30/jam** (keputusan user), tetapi interval 5 detik antar pesan AI per sender + cap panjang input (mis. 500 char).
+- Event validation (lihat C1): hanya `messages.upsert` type `notify`; group/status/broadcast/newsletter/system non-user diabaikan.
+- Sender belum terhubung: balas panduan hubungkan — **maks 1 balasan per sender per jam**.
+- Rate limit per sender (20 pesan/menit): **key dari resolved identity** — prioritas ForFH `userId` bila ter-resolve; fallback JID/LID stabil (bukan substring phone).
+- AI: bebas kuota 30/jam (keputusan user), interval 5 detik antar pesan AI per sender, cap input 500 char.
+- **Keamanan event**: tidak memproses event blind; jangan menonaktifkan security safeguard Baileys; tidak menambahkan custom workaround yang menurunkan keamanan; versi dependency dijamin patched (rc14).
 
 ### B5. Lingkup data
 
-Bot hanya membaca **data user sendiri** dari DB ForFH (tabel tersinkron). Tidak pernah memanggil Kampus Kita/HE-BAT. Identitas = nomor pengirim yang sudah diverifikasi OTP.
+Bot hanya membaca **data user sendiri** dari DB ForFH. Tidak pernah memanggil Kampus Kita/HE-BAT. Identity = resolved (PN/LID) dari pengirim yang sudah diverifikasi OTP.
 
-## C. Alur pesan & perintah
+## 4. C. Message pipeline & identity resolver (deliverable: identity resolver design)
 
-### C1. Pipeline
+### C1. Pipeline (revisi)
 
 ```
-messages.upsert (notify)
- → normalisasi jid sender (phone)
- → lookup wa_bindings (phone → userId)
+messages.upsert
+ → validate event (type notify, bukan group/broadcast/status/newsletter/system)
+ → extract message identity (WAMessageKey: remoteJid, participant, *Alt, *Username, addressingMode)
+ → resolveWhatsAppIdentity(msg)          → { userId | null, identity { lid?, phone?, jid? } }
+ → resolve ForFH user (userId) atau status belum-terhubung
  → router:
      prefix "!"   → parse command → executor (query DB) → formatter → send
      tanpa prefix → AI path (data ringkas user) → send
-     sender belum terhubung → panduan hubungkan
+     sender belum terhubung → panduan (maks 1/jam)
 ```
 
-### C2. Perintah MVP (`src/lib/wa/commands.ts` — pure, tanpa DB)
+- JANGAN mengasumsikan semua identity berupa `628...@s.whatsapp.net`. Semua konversi lewat resolver.
+
+### C2. `resolveWhatsAppIdentity(message)` — `src/lib/wa/identity.ts`
+
+1. Kumpulkan kandidat JID dari `key.remoteJid` (1:1 = sender), `key.participant`, `key.remoteJidAlt`, `key.participantAlt`, `key.remoteJidUsername`/`participantUsername` (prefix yang memadai) — dedupe, urutkan: explicit participant > remoteJid > alternates.
+2. Untuk tiap kandidat:
+   - `isLidUser(jid)` → coba `getPNForLID(lid)` (mapping internal Baileys: cache → `wa_signal_keys['lid-mapping']` → USync fallback). Dapat PN → lanjut lookup; tidak → simpan sebagai identitas lid saja.
+   - `isPnUser(jid)` → phone = `jidDecode(jid).user`.
+3. Lookup binding: `lid = <user part>` OR `jid = normalized` OR `phone = phone` (prioritas lid → jid → phone).
+4. Kembalikan `{ userId?, identity }`; bila cocok via lid/jid dan `binding.lid/jid` kosong → backfill (non-destruktif).
+5. Tidak cocok → `userId = null` → jalur panduan.
+
+- Mapping LID persist otomatis oleh keystore Baileys (`lid-mapping` + `_reverse` di `wa_signal_keys`) — jangan buat mapping LID kustom yang konflik dengan internal Baileys. Application layer hanya menjawab: *given WhatsApp identity → which ForFH user?*
+
+### C3. Perintah MVP (`src/lib/wa/commands.ts` — pure)
 
 | Perintah | Aksi |
 |---|---|
 | `!hubungkan` | panduan cara link akun |
 | `!jadwal [hari ini\|besok\|minggu ini\|senin..minggu]` | default hari ini |
 | `!tugas [n]` | default 5 tugas terdekat, bernomor urut `[1]..[n]` |
-| `!selesai <nomor>` | toggle tugas done — nomor = urutan dari output `!tugas` (bukan UUID) |
+| `!selesai <nomor>` | toggle tugas done — nomor = urutan output `!tugas` |
 | `!nilai` | ringkasan nilai per mata kuliah |
-| `!insight` | daily insight (reuse cache AI 24 jam — tanpa AI call baru bila cache ada) |
-| `!help` | daftar lengkap + contoh |
-| `!menu` | daftar ringkas |
+| `!insight` | daily insight (reuse cache AI 24 jam) |
+| `!help` / `!menu` | daftar lengkap / ringkas |
 | `!putuskan` | unlink (konfirmasi sekali) |
 | tidak dikenal | `!help` singkat |
 
-### C3. Format output (`src/lib/wa/format.ts` — pure)
+### C4. Format output (`src/lib/wa/format.ts` — pure)
 
-Pola konsisten semua balasan — header emoji + bold, divider, baris rapi, mudah dipindai:
+Pola konsisten semua balasan — header emoji + bold, divider, baris rapi:
 
 ```
 📅 *JADWAL HARI INI — Kamis, 13 Agustus*
@@ -148,114 +277,219 @@ Pola konsisten semua balasan — header emoji + bold, divider, baris rapi, mudah
 3 kelas · ketik !jadwal besok utk besok
 ```
 
-- Balasan ≤ ~3500 char (batas WA); lebih → ringkas + "…ketik !x utk lengkap".
-- Waktu lokal **Asia/Jakarta** (pola daily-insight existing).
-- `!tugas` menyertakan status ✅/⏳ + tenggat; `!nilai` per MK (kode, nama, nilai, SKS).
+- ≤ ~3500 char (batas WA); lebih → ringkas + "…ketik !x utk lengkap".
+- Waktu lokal **Asia/Jakarta** (pola daily-insight).
+- `!tugas` menyertakan status ✅/⏳ + tenggat; `!nilai` per MK.
 
-### C4. AI natural language (`src/lib/wa/ai.ts`)
+### C5. AI natural language (`src/lib/wa/ai.ts`)
 
-- Pesan tanpa `!` → reuse `executeAIRequest` (router AI existing: deadline 35s, fallback berantai) **tanpa** `checkRateLimit('ai', ...)`.
-- Prompt berisi data ringkas user (jadwal minggu ini, 5 tugas terdekat, ringkasan nilai) + instruksi menjawab singkat dalam Bahasa Indonesia.
-- Keluaran AI = balasan langsung (teks polos, boleh emoji/bold WA).
-- `aiEnabled` mati di Pengaturan → jawab graceful: "AI nonaktif — ketik !help untuk perintah."
+- Pesan tanpa `!` → `executeAIRequest` (router AI existing: deadline 35s, fallback berantai) **tanpa** `checkRateLimit('ai', ...)`.
+- Prompt: data ringkas user (jadwal minggu ini, 5 tugas terdekat, ringkasan nilai) + instruksi jawab singkat Bahasa Indonesia.
+- Keluaran = balasan langsung (teks polos, emoji/bold WA).
+- `aiEnabled` mati → graceful: "AI nonaktif — ketik !help untuk perintah."
 
-## D. Notifikasi (channel switching)
+## 5. D. Notifikasi (channel switching) — revisi
 
 ### D1. Worker (`src/lib/notifications/worker.ts`)
 
-Ganti pemanggil `sendPushToUser` di kedua blok (class & task) dengan `sendReminder(userId, payload)`:
+Ganti pemanggil `sendPushToUser` (blok class & task) dengan `sendReminder(userId, payload)`:
 
-1. `findFirst` `wa_bindings` status active → `sendWaText(phone, text)`.
-   - Socket tidak siap → retry 2× singkat → tetap gagal → **fallback web push** bila ada subscription.
-   - Sukses → record `notificationDeliveries` `channel: 'whatsapp'`; fallback → `'web_push'`.
-2. Tidak ada binding → web push seperti sekarang.
-3. Dedupe key existing (`entityId|occurrenceAt|offset`) tidak berubah — tetap mencegah dobel.
+1. `findFirst` `wa_bindings` status active → **`resolveWhatsAppTarget(binding)`** → `WaClientManager.sendText(target, text)`.
+2. Gagal (socket tidak siap setelah retry singkat / queue drop) → **caller menerima failure** → fallback web push bila ada subscription → record `notificationDeliveries` `channel: 'whatsapp'` | `'web_push'`.
+3. Tidak ada binding → web push seperti sekarang.
+4. Dedupe key existing (`entityId|occurrenceAt|offset`) tidak berubah.
 
-### D2. Format notif WA
+### D2. `resolveWhatsAppTarget(binding)` — `src/lib/wa/identity.ts`
 
-Singkat & actionable, dari title/body worker existing yang dirapikan:
+Pilih identity outbound valid (BUKAN asumsi `${phone}@s.whatsapp.net` selalu):
+
+1. `binding.jid` (transport jid tersimpan — PN atau LID, dipakai bila valid).
+2. `binding.lid` → lid JID (`<lid>@s.whatsapp.net` bila diterima Baileys 7 — verifikasi saat implementasi; alternatif: `getPNForLID(lid)` → PN jid).
+3. Fallback: `${phone}@s.whatsapp.net` (verification identifier).
+
+`phone` TETAP dipertahankan sebagai verification/UI identity.
+
+### D3. Format notif WA
 
 ```
 ⏰ *Kuliah 30 menit lagi*
 Hukum Pidana · Ruang A-203 · 08:00
 ```
 
-### D3. `src/lib/wa/send.ts`
+### D4. Queue (semantics revisi)
 
-`sendWaText(phone, text)`:
-- jid = `<phone>@s.whatsapp.net`; socket ready check (`ws.readyState` / `connection.readyState === 'open'`).
-- Antrean in-memory kecil (maks ~50 pesan) — saat socket reconnect, antrean terkirim berurutan; penuh → drop + log (web push fallback ditangani pemanggil).
+- In-memory queue maks 50, FIFO — hanya menampung pesan selama **short reconnect**.
+- Socket gagal lama → **drop pesan, caller menerima failure** (bukan delivery terjamin) → notification worker melakukan fallback web push.
+- Tidak pernah mengandalkan in-memory queue untuk guaranteed delivery.
 
-## E. UI & setup
+## 6. E. UI & setup — revisi (pairing states + status bot)
 
-### E1. `src/components/wa/WhatsAppCard.tsx` (client) — dipasang di Pengaturan
+### E1. `src/components/wa/WhatsAppCard.tsx` (client) — Pengaturan
 
-- Status bot: terhubung ke nomor bot / belum pairing (arahkan ke tombol pairing) / offline.
-- Status binding user: terhubung ke `628xxx****xx` / belum.
-- Form hubungkan: input nomor → kirim OTP → input kode → verifikasi; tombol putuskan (konfirmasi).
-- Section pairing (hanya pemilik `WA_ADMIN_PHONE` & bot belum connect): tombol "Tampilkan kode" → kode 8 digit + langkah-langkah.
+- Status bot: dari state machine — `offline (stopped)` / `menghubungkan…` / `online` / `reconnecting…` / `logged_out (butuh pairing ulang)` / `error (aksi yang jelas)`.
+- Pairing (hanya pemilik `WA_ADMIN_PHONE` & bot belum online): tombol "Tampilkan kode" → status: `code generated` → `waiting for link` → `linked` / `failed|expired` (tombol "Minta kode baru").
+- Status binding user: `628xxx****xx` / belum; form hubungkan (input nomor → OTP → kode → verifikasi); tombol putuskan (konfirmasi).
 
-### E2. Route API (semua `runtime = "nodejs"`, semua butuh sesi login — pola `getSessionUser`)
+### E2. Route API (semua `runtime = "nodejs"`, semua butuh sesi — pola `getSessionUser`)
 
 | Route | Aksi |
 |---|---|
-| `GET /api/wa/status` | `{ botConnected, botPhone?, myPhone?, myStatus? }` |
-| `POST /api/wa/otp/request` | `{ phone }` — guard rate limit, kirim OTP via bot |
-| `POST /api/wa/otp/verify` | `{ phone, otp }` — bind akun |
+| `GET /api/wa/status` | `{ socketState, botConnected, botPhone?, health (observability fields), myPhone?, myStatus? }` |
+| `POST /api/wa/otp/request` | `{ phone }` — guard rate limit; OTP baru invalidasi lama; kirim via bot |
+| `POST /api/wa/otp/verify` | `{ phone, otp }` — bind; reset fields |
 | `POST /api/wa/unlink` | putuskan binding user |
-| `GET /api/wa/pairing` | pemilik; kode pairing baru per panggilan (Baileys expire ~menit) |
+| `GET /api/wa/pairing` | pemilik; request kode + state tracking (pairing state machine A7) |
 
-## F. Testing & risiko
+## 7. F. Testing & risiko (deliverable: testing matrix)
 
-### F1. Unit (`src/tests/wa.test.ts` — pure, tanpa jaringan/DB, Baileys di-mock)
+### F1. Kelompok tes baru — `src/tests/wa.test.ts` (Baileys di-mock; tanpa jaringan eksternal)
 
-- `normalizePhone`: `08xx` → `628xx`, strip spasi/`+`/dash, input invalid → null.
-- `parseCommand`: `!jadwal`, `!jadwal besok`, `!selesai 3`, `!help`, unknown → intent benar.
-- Formatter `jadwal`/`tugas`/`nilai`: input contoh → output memenuhi pola (header, divider, urutan).
-- OTP helper pure `verifyOtp(code, storedHash, expiresAt, attempts)`: cocok/expired/over-attempt.
-- Channel decision `chooseChannel(binding, hasPushSub)`: wa / push / fallback.
+**Auth state (storage adapter)** — memakai libsql `:memory:` (via drizzle, inisialisasi schema di tes — pola baru, aman; tanpa menyentuh DB dev/produksi):
 
-### F2. Verifikasi penuh
+- save creds → load creds (round-trip terenkripsi)
+- save key → load key (per namespace)
+- update existing key → load updated
+- delete key (`null`) → load → absent
+- "restart" = instance store baru dari data yang sama → restore → data utuh
+- persist `lid-mapping` (termasuk `_reverse`) & `tctoken` namespace
 
-- `npm run quality` — 176 tes tetap hijau + tes baru.
+**Socket manager** (Baileys di-mock):
+
+- `ensureWaClient()` idempoten: 3× panggilan berurutan + panggilan saat `starting`/`connecting` → tepat 1 socket (shared startup promise)
+- connect → open; disconnect temporary → reconnect (backoff); loggedOut → stop, auth invalid; connectionReplaced → stop, tidak reconnect; restartRequired → recreate
+- `waKeepAlive()`: open → healthy; dead → ensure; auth-invalid → auth-invalid (tanpa recreate)
+
+**Identity resolver** (pure):
+
+- PN identity → userId; LID identity → userId (via mapping); alternate identity; unknown → null; mapping refresh; restart preserves mapping (keystore round-trip)
+
+**Messaging** (pure, event mock):
+
+- incoming text (bound sender) → routed; unknown sender → panduan; group diabaikan; broadcast/status diabaikan; system message diabaikan
+
+**Security**:
+
+- malformed/untrusted events (fake `messages.upsert`, identity asing) tidak lolos ke identity check aplikasi (tetap null / panduan); tidak bypass rate limit
+
+**Pairing** (state machine pure):
+
+- request code → waiting → success (isNewLogin); expired → failed → re-request; 408 selama menunggu → failed
+
+**Notification** (pure):
+
+- decision: WA binding active → wa; WA gagal → push fallback; tanpa binding → push; no duplicate delivery (dedupe key tetap)
+
+### F2. Acceptance test wajib (sebelum dianggap selesai)
+
+```
+1. Fresh pairing (pairing state machine, kode → linked)
+2. OTP bind account
+3. Incoming message via PN
+4. Incoming message via LID (bila applicable di WA)
+5. Command response
+6. AI response
+7. Notification delivery
+8. Disconnect (simulasi jaringan)
+9. Automatic reconnect
+10. Process restart (restart app; bukan restart bot manual)
+11. Restore auth state (tanpa scan ulang)
+12. Send message after restart
+13. Receive message after restart
+14. Unlink
+15. Re-pair
+```
+
+Plus: `npm run quality` (176 + baru hijau) dan `npm run build` sukses.
+
+### F3. Verifikasi penuh
+
+- `npm run quality` — 176 tes tetap hijau + kelompok F1.
 - `npm run build` — sukses, standalone OK.
-- E2E manual (dev, WebBridge bila perlu): pairing → hubungkan akun sendiri → semua perintah → AI natural language → notif saat offset tercapai → putuskan.
+- `npm ls @whiskeysockets/baileys` → satu versi rc14, tanpa transitive duplicate.
+- E2E manual (WebBridge bila perlu): checklist F2.
 
-### F3. Risiko & mitigasi
+### F4. Risiko & mitigasi
 
 | Risiko | Mitigasi |
 |---|---|
-| Nomor bot kena pembatasan WhatsApp (library tidak resmi) | Nomor khusus bot (dampak terbatas); fallback: scan ulang / ganti nomor / upgrade ke WhatsApp Cloud API |
-| Socket putus saat Koyeb redeploy/restart | Auto-reconnect + creds di Turso → tanpa scan ulang; keepalive QStash ≤ 5 menit |
-| AI natural language disalahgunakan (bebas kuota) | Interval 5 detik/pengirim, rate limit 20 pesan/menit, hanya untuk nomor terhubung |
+| Nomor bot kena pembatasan WhatsApp (library tidak resmi) | Nomor khusus bot; fallback: pairing ulang / ganti nomor / upgrade Cloud API |
+| Socket putus saat Koyeb redeploy | Auto-reconnect (matriks A4) + auth di Turso → tanpa scan ulang; keepalive QStash sebagai health trigger |
+| Sesi "terlihat hidup" tapi pesan berhenti (silent-session 2026) | Observability A6: lastMessageEvent dll. + status UI |
+| Pairing code gagal walau kode dibuat (regression 2026, `408`) | Pairing state machine A7 + tombol "Minta kode baru" |
+| Dua instance baca auth state sama | Constraint A1: horizontal scaling dilarang; didokumentasikan di code |
+| AI natural language disalahgunakan | Interval 5 detik/pengirim, rate limit 20/menit, hanya nomor terhubung |
 | Pesan asing jadi spam target | 1 balasan/jam per sender belum terhubung |
-| Turso jadi hot path | Creds update jarang (bukan per pesan); binding lookup 1 query/pesan — fine |
+| Turso hot path | Keystore batch get/set (bukan per-char); creds update jarang |
 
-## Verifikasi (checklist akhir)
+## 8. Daftar file yang diubah/dibuat (deliverable: file list)
 
-1. Migrasi 0004 applied di DB lokal + Turso produksi (saat deploy).
-2. Pairing: kode tampil di Pengaturan (pemilik saja), link sukses dari HP, `botConnected: true`.
-3. Binding: OTP terkirim ke nomor, verify sukses; kode salah 3× ditolak; OTP expired ditolak.
-4. Perintah: semua `!command` benar; unknown → `!help`; natural language → AI jawab; `aiEnabled` off → graceful.
-5. Notif: user terhubung WA menerima di WA (tanpa web push dobel); user tanpa binding tetap web push.
-6. Grup & pesan non-user diabaikan; nomor asing dapat panduan (maks 1/jam).
-7. Redeploy → reconnect otomatis tanpa scan (cek status + log).
-8. `npm run quality` hijau + `npm run build` sukses.
+**Baru:**
+- `src/lib/wa/client-manager.ts` — state machine socket + `ensureWaClient()` + disconnect matrix + reconnect policy (A1–A4)
+- `src/lib/wa/session-store.ts` — `SignalKeyStore` adapter Turso (`get`/`set`/`transaction`) + creds load/save terenkripsi (B2)
+- `src/lib/wa/identity.ts` — `resolveWhatsAppIdentity(msg)` + `resolveWhatsAppTarget(binding)` + wrapper PN/LID/JID (C2, D2)
+- `src/lib/wa/pairing.ts` — pairing state machine (A7)
+- `src/lib/wa/health.ts` — observability silent-session (A6)
+- `src/lib/wa/send.ts` — `WaClientManager.isReady()/sendText()` abstraction + queue (D4)
+- `src/lib/wa/normalize.ts` — normalize phone (verification identity)
+- `src/lib/wa/format.ts` — formatter balasan (C4)
+- `src/lib/wa/commands.ts` — parser `!` + dispatcher (C3)
+- `src/lib/wa/rate-limit.ts` — rate limit per resolved identity (B4)
+- `src/lib/wa/ai.ts` — natural language path (C5)
+- `src/lib/wa/executors/` — jadwal.ts, tugas.ts, selesai.ts, nilai.ts, insight.ts (query DB)
+- `src/app/api/wa/status/route.ts`, `otp/request/route.ts`, `otp/verify/route.ts`, `unlink/route.ts`, `pairing/route.ts` (E2)
+- `src/components/wa/WhatsAppCard.tsx` (E1)
+- `src/tests/wa.test.ts` (F1)
 
-## Urutan implementasi (commit per langkah)
+**Diubah:**
+- `package.json` — `@whiskeysockets/baileys@7.0.0-rc14` (pin exact)
+- `src/lib/db/schema.ts` + `drizzle` migrasi 0004 + `src/lib/db/init.ts` — `wa_bindings` + `wa_signal_keys` (B1)
+- `src/lib/notifications/worker.ts` — `sendReminder` channel routing (D1)
+- `src/app/api/internal/reminders/process/route.ts` — panggil `waKeepAlive()` (A5)
+- `src/app/pengaturan/page.tsx` — pasang `WhatsAppCard`
+- `src/tests/run-tests.ts` — registrasi `runWaTests`
+- `docs/BUILD_STATUS.md` — catatan versi Baileys + fitur (version gate acceptance)
 
-1. Migrasi 0004 (`wa_bindings`) + init.ts + deps Baileys + `session-store.ts`.
-2. `client.ts` lifecycle (connect/reconnect/persist/events) + `waKeepAlive` di tick QStash existing.
-3. Pure: `normalize.ts`, `format.ts`, `commands.ts` (parser), `rate-limit.ts`.
-4. Executors: `jadwal`, `tugas`, `selesai`, `nilai`, `insight`.
-5. AI path (`ai.ts`) + `send.ts`.
-6. Worker routing notif (D1-D2).
-7. Route API WA (E2) + `WhatsAppCard` UI (E1).
-8. Tes `wa.test.ts` + `npm run quality` + `npm run build`.
+## 9. Verifikasi (checklist akhir)
+
+1. Migrasi 0004 applied lokal + Turso produksi (saat deploy).
+2. `npm ls @whiskeysockets/baileys` → rc14 tunggal; BUILD_STATUS mencatat versi.
+3. Pairing: state `code generated → waiting → linked`; gagal/expired → tombol baru.
+4. Binding: OTP terkirim, verify sukses; salah 3× ditolak; OTP expired ditolak; OTP baru invalidasi lama; setelah verify fields di-reset.
+5. Perintah: semua `!command` benar; unknown → `!help`; natural language → AI; `aiEnabled` off → graceful.
+6. Notif: user terhubung WA terima di WA (tanpa dobel); WA gagal → web push; tanpa binding → web push.
+7. Grup & pesan non-user diabaikan; nomor asing dapat panduan (maks 1/jam).
+8. Redeploy/restart → reconnect tanpa scan; `GET /api/wa/status` menampilkan health fields.
+9. Disconnect matrix: simulasikan temporary (reconnect), loggedOut (stop + pairing ulang).
+10. `npm run quality` hijau + `npm run build` sukses + acceptance 15 item (F2) lolos.
+
+## 10. Urutan implementasi (commit per langkah)
+
+1. Deps (pin rc14) + migrasi 0004 (`wa_bindings` + `wa_signal_keys`) + init.ts.
+2. `session-store.ts` (SignalKeyStore adapter + creds) — dengan tes auth-state (F1).
+3. `client-manager.ts` (state machine, disconnect matrix, ensureWaClient) + `waKeepAlive` di tick QStash — dengan tes socket (mock).
+4. `identity.ts` (resolver PN/LID) + `normalize.ts` + `format.ts` + `commands.ts` + `rate-limit.ts` — tes pure.
+5. Executors (jadwal/tugas/selesai/nilai/insight) + `ai.ts` + `send.ts`.
+6. Worker routing notif (D1-D2) — tes decision pure.
+7. Route API WA (E2) + `pairing.ts` + `health.ts` + `WhatsAppCard` (E1).
+8. Kelompok tes lengkap F1 + acceptance F2 + `npm run quality` + `npm run build`.
 9. Review mandiri → serahkan ke user.
+
+## 11. Catatan compatibility Baileys 7.x (deliverable: compatibility notes)
+
+- Auth: `{ creds, keys }` dengan `SignalKeyStore` adapter Turso — mendukung semua namespace (terverifikasi: `lid-mapping`, `tctoken`, `device-list`; sisanya generik).
+- Identity: PN (`@s.whatsapp.net`) vs LID (`@lid`) dibedakan via `isPnUser`/`isLidUser`; mapping dipelihara internal Baileys di keystore `lid-mapping` — application layer hanya resolver.
+- `DisconnectReason` enum & `connection.update` sesuai Baileys 7 (nilai numerik terverifikasi).
+- `requestPairingCode` tersedia; dipakai dengan state machine (regression 408/expired diakui).
+- `version` WA: default library; tanpa hardcode manual.
+- Batas: 1 instance/1 socket; scaling memerlukan redesign distributed (non-goal MVP).
+
+## 12. Hal yang TIDAK BOLEH diubah (keputusan produk tetap)
+
+- satu nomor bot · web-first OTP · user binding · `!command` deterministic path · natural-language AI path · notification channel switching · web push fallback · group ignored untuk MVP · akun ForFH tetap via email kampus · tidak ada CRUD penuh via WhatsApp · tidak ada deployment terpisah untuk MVP
 
 ## Prasyarat
 
-- PR #3 (perf overhaul) **sudah di-merge ke master** (`4c46f2b`) ✓ — `ai_cache`, router deadline 35s, `mapLimit`, mem-cache tersedia.
-- Env baru saat deploy: `WA_ADMIN_PHONE` (nomor WhatsApp pemilik, E.164 `628…`) dan `WA_BOT_PHONE` (nomor bot, E.164) — dipakai `requestPairingCode`.
+- PR #3 (perf overhaul) sudah di-merge ke master (`4c46f2b`) ✓ — `ai_cache`, router deadline 35s, `mapLimit`, mem-cache tersedia.
+- Env baru saat deploy: `WA_ADMIN_PHONE` (pemilik, E.164) dan `WA_BOT_PHONE` (nomor bot, E.164 — dipakai `requestPairingCode`).
 - QStash tick existing (`internal/reminders/process`) sudah berjalan — keepalive bot ditumpang di sana.
+- Baileys `7.0.0-rc14` (latest npm per 2026-08-13; ≥ rc12 patch CVE-2026-48063).
