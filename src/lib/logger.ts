@@ -14,7 +14,18 @@ const SENSITIVE_KEY_PATTERNS = [
   /cookie/i,
 ];
 
-export function redactSensitiveString(str: string): string {
+export function redactSensitiveString(str: unknown): string {
+  // Baileys (pino-style) memanggil logger.error({error, ...}, 'msg') — arg
+  // pertama bisa objek non-string. Jangan crash: koersi ke teks yang informatif.
+  if (typeof str !== "string") {
+    if (str instanceof Error) return str.stack ?? `${str.name}: ${str.message}`;
+    if (str === null || str === undefined) return String(str);
+    try {
+      return JSON.stringify(str);
+    } catch {
+      return String(str);
+    }
+  }
   if (!str) return str;
   return str
     .replace(/(Bearer\s+)[A-Za-z0-9_\-\.]+/gi, "$1[REDACTED]")
