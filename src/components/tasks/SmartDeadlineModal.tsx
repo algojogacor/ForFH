@@ -5,6 +5,7 @@ import { Check, Loader2, ShieldCheck } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/Dialog";
 import { useToast } from "../ui/Toast";
 import { formatDateIndonesian } from "@/lib/utils";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function SmartDeadlineModal({
   open,
@@ -74,6 +75,7 @@ export function SmartDeadlineModal({
         });
       }
 
+      invalidateClientCache();
       success("Rencana Smart Deadline berhasil diterapkan.");
       onOpenChange(false);
       onApplied?.();

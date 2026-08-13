@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -36,6 +37,8 @@ export default function LoginPage() {
         return;
       }
 
+      // Bersihkan cache client agar data antar user tidak bocor.
+      invalidateClientCache();
       success("Selamat datang di ForFH. Data kampus sedang disinkronkan.");
       router.push("/");
       router.refresh();

@@ -9,6 +9,7 @@ import { TaskDescription } from "@/components/tasks/TaskDescription";
 import { SmartDeadlineModal } from "@/components/tasks/SmartDeadlineModal";
 import { useToast } from "@/components/ui/Toast";
 import { formatDateIndonesian } from "@/lib/utils";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function TasksPage() {
   const { toast, success } = useToast();
@@ -57,6 +58,7 @@ export default function TasksPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
       });
+      invalidateClientCache();
       fetchData();
     } catch (err) {
       console.error("Failed to toggle task:", err);
@@ -81,6 +83,7 @@ export default function TasksPage() {
     if (!confirm("Hapus tugas ini?")) return;
     try {
       await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+      invalidateClientCache();
       success("Tugas berhasil dihapus.");
       fetchData();
     } catch (err) {

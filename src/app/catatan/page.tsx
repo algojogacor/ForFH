@@ -8,6 +8,7 @@ import { NoteCard } from "@/components/notes/NoteCard";
 import { MarkdownEditor } from "@/components/notes/MarkdownEditor";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function NotesPage() {
   const { toast, success } = useToast();
@@ -105,6 +106,7 @@ export default function NotesPage() {
         success("Catatan baru berhasil dibuat.");
       }
 
+      invalidateClientCache();
       fetchData();
     } catch (err) {
       toast("Gagal menyimpan catatan.");
@@ -117,6 +119,7 @@ export default function NotesPage() {
     if (!confirm("Hapus catatan ini?")) return;
     try {
       await fetch(`/api/notes/${noteId}`, { method: "DELETE" });
+      invalidateClientCache();
       success("Catatan berhasil dihapus.");
       if (activeNote?.id === noteId) {
         setIsEditing(false);
@@ -319,6 +322,7 @@ export default function NotesPage() {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ pinned: curr === 0 }),
                       });
+                      invalidateClientCache();
                       fetchData();
                     }}
                   />

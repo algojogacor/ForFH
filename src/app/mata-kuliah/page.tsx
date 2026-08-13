@@ -8,6 +8,7 @@ import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { CourseFormModal } from "@/components/courses/CourseFormModal";
 import { useToast } from "@/components/ui/Toast";
 import { INDONESIAN_DAYS } from "@/lib/utils";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function CoursesPage() {
   const router = useRouter();
@@ -53,6 +54,7 @@ export default function CoursesPage() {
     if (!confirm("Hapus mata kuliah ini?")) return;
     try {
       await fetch(`/api/courses/${courseId}`, { method: "DELETE" });
+      invalidateClientCache();
       success("Mata kuliah berhasil dihapus.");
       fetchCourses();
     } catch (err) {

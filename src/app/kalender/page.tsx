@@ -6,6 +6,7 @@ import { TaskDescription } from "@/components/tasks/TaskDescription";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { formatDateIndonesian, INDONESIAN_MONTHS, INDONESIAN_DAYS } from "@/lib/utils";
+import { cachedFetch } from "@/lib/client-cache";
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -17,9 +18,9 @@ export default function CalendarPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/tasks").then((r) => r.json()),
-      fetch("/api/exams").then((r) => r.json()),
-      fetch("/api/schedules").then((r) => r.json()),
+      cachedFetch("/api/tasks"),
+      cachedFetch("/api/exams"),
+      cachedFetch("/api/schedules"),
     ])
       .then(([tasksData, examsData, schedData]) => {
         setTasks(tasksData.tasks || []);

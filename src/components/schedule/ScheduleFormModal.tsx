@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/Dialog";
 import { useToast } from "../ui/Toast";
 import { INDONESIAN_DAYS } from "@/lib/utils";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function ScheduleFormModal({
   open,
@@ -79,6 +80,7 @@ export function ScheduleFormModal({
         success("Jadwal kuliah berhasil ditambahkan.");
       }
 
+      invalidateClientCache();
       onOpenChange(false);
       onSaved();
     } catch (err) {

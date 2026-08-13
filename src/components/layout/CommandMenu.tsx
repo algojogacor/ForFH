@@ -12,6 +12,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { Dialog, DialogContent } from "../ui/Dialog";
+import { cachedFetch } from "@/lib/client-cache";
 
 export function CommandMenu({
   open,
@@ -30,9 +31,9 @@ export function CommandMenu({
     if (open) {
       // Pre-fetch tasks, courses, notes
       Promise.all([
-        fetch("/api/tasks").then((r) => r.json()).catch(() => ({ tasks: [] })),
-        fetch("/api/courses").then((r) => r.json()).catch(() => ({ courses: [] })),
-        fetch("/api/notes").then((r) => r.json()).catch(() => ({ notes: [] })),
+        cachedFetch("/api/tasks").catch(() => ({ tasks: [] })),
+        cachedFetch("/api/courses").catch(() => ({ courses: [] })),
+        cachedFetch("/api/notes").catch(() => ({ notes: [] })),
       ]).then(([tasksData, coursesData, notesData]) => {
         setTasksList(tasksData.tasks || []);
         setCoursesList(coursesData.courses || []);

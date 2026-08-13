@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Plus, Trash2, Check, Bell, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { INDONESIAN_DAYS } from "@/lib/utils";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -139,6 +140,7 @@ export default function OnboardingPage() {
         }
       }
 
+      invalidateClientCache();
       success("Setup workspace ForFH selesai.");
       router.push("/");
       router.refresh();

@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { formatRelativeTimeIndonesian } from "@/lib/utils";
 import confetti from "canvas-confetti";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function TodayTasks({
   tasks: initialTasks = [],
@@ -48,6 +49,7 @@ export function TodayTasks({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: nextStatus }),
         });
+        invalidateClientCache();
         router.refresh();
       } catch (err) {
         console.error("Failed to toggle task:", err);

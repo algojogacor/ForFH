@@ -5,6 +5,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { CampusDataCard } from "@/components/campus/CampusDataCard";
 import { CAMPUS_JENIS_META } from "@/components/campus/campusMeta";
+import { cachedFetch } from "@/lib/client-cache";
 
 interface InfoItem {
   jenis: string;
@@ -17,8 +18,7 @@ export default function InfoKampusPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/campus/info")
-      .then((r) => r.json())
+    cachedFetch("/api/campus/info")
       .then((data) => setInfo(data))
       .catch(() => setInfo({ connected: false, lastSyncAt: null, items: [] }))
       .finally(() => setIsLoading(false));

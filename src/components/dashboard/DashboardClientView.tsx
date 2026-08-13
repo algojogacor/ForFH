@@ -14,6 +14,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { formatDateIndonesian } from "@/lib/utils";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 interface DashboardClientViewProps {
   initialData: {
@@ -53,6 +54,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "DONE" }),
       });
+      invalidateClientCache();
     } catch (err) {
       console.error("Failed to complete task:", err);
     }

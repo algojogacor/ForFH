@@ -8,6 +8,7 @@ import { ExamCard } from "@/components/exams/ExamCard";
 import { ExamFormModal } from "@/components/exams/ExamFormModal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function ExamsPage() {
   const { toast, success } = useToast();
@@ -49,6 +50,7 @@ export default function ExamsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topicId, completed: currentCompleted === 0 }),
       });
+      invalidateClientCache();
       fetchData();
     } catch (err) {
       fetchData();
@@ -62,6 +64,7 @@ export default function ExamsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),
       });
+      invalidateClientCache();
       fetchData();
     } catch (err) {
       toast("Gagal menambahkan topik.");
@@ -72,6 +75,7 @@ export default function ExamsPage() {
     if (!confirm("Hapus jadwal ujian ini?")) return;
     try {
       await fetch(`/api/exams/${examId}`, { method: "DELETE" });
+      invalidateClientCache();
       success("Jadwal ujian berhasil dihapus.");
       fetchData();
     } catch (err) {

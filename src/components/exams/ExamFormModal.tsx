@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/Dialog";
 import { useToast } from "../ui/Toast";
 import { EXAM_TYPES } from "@/lib/constants";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function ExamFormModal({
   open,
@@ -54,6 +55,7 @@ export function ExamFormModal({
         }),
       });
 
+      invalidateClientCache();
       success("Jadwal ujian berhasil ditambahkan.");
       onOpenChange(false);
       onSaved();

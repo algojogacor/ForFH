@@ -20,6 +20,7 @@ import { TaskCard } from "@/components/tasks/TaskCard";
 import { NoteCard } from "@/components/notes/NoteCard";
 import { ReadingCard } from "@/components/readings/ReadingCard";
 import { ExamCard } from "@/components/exams/ExamCard";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function CourseHubPage() {
   const params = useParams();
@@ -248,6 +249,7 @@ export default function CourseHubPage() {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ topicId: tId, completed: curr === 0 }),
                       });
+                      invalidateClientCache();
                       fetchHubData();
                     }}
                     onAddTopic={async (eId, title) => {
@@ -256,10 +258,12 @@ export default function CourseHubPage() {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ title }),
                       });
+                      invalidateClientCache();
                       fetchHubData();
                     }}
                     onDeleteExam={async (eId) => {
                       await fetch(`/api/exams/${eId}`, { method: "DELETE" });
+                      invalidateClientCache();
                       fetchHubData();
                     }}
                     onOpenStudyRoadmap={() => {}}

@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { VoiceCaptureButton } from "./VoiceCaptureButton";
 import { useToast } from "../ui/Toast";
 import { TASK_TYPES, TASK_PRIORITIES } from "@/lib/constants";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function QuickCaptureModal({
   open,
@@ -121,6 +122,7 @@ export function QuickCaptureModal({
         throw new Error("Gagal menyimpan tugas.");
       }
 
+      invalidateClientCache();
       success("Tugas berhasil ditambahkan.");
       onOpenChange(false);
       onTaskCreated?.();

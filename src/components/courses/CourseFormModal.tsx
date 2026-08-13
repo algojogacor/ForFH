@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/Dialog";
 import { useToast } from "../ui/Toast";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function CourseFormModal({
   open,
@@ -76,6 +77,7 @@ export function CourseFormModal({
         success("Mata kuliah berhasil ditambahkan.");
       }
 
+      invalidateClientCache();
       onOpenChange(false);
       onSaved();
     } catch (err) {

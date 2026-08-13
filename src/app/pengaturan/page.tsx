@@ -7,6 +7,7 @@ import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 import { SyncProgressCard } from "@/components/campus/SyncProgressCard";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function SettingsPage() {
   const { toast, success } = useToast();
@@ -39,6 +40,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/campus/sync", { method: "POST" });
       if (res.ok) {
+        invalidateClientCache();
         success("Sinkronisasi dimulai di latar belakang — pantau progress di atas.");
       } else {
         const data = await res.json().catch(() => ({}));
@@ -64,6 +66,7 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (res.ok) {
+        invalidateClientCache();
         success("HE-BAT terhubung. Kalender tugas akan tersinkron.");
         setShowHebatForm(false);
         setHebatPassword("");
@@ -82,6 +85,7 @@ export default function SettingsPage() {
     if (!confirm("Putuskan koneksi kampus? Data yang sudah tersinkron tetap tersimpan, tapi tidak akan diperbarui lagi.")) return;
     try {
       await fetch("/api/campus/disconnect", { method: "POST" });
+      invalidateClientCache();
       success("Koneksi kampus diputuskan.");
       setCampus(null);
     } catch {

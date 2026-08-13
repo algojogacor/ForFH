@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search, Sun, Moon, LogOut, Command } from "lucide-react";
 import { useToast } from "../ui/Toast";
 import { clearUserCache } from "@/lib/offline/idb";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function Header({
   user,
@@ -23,6 +24,8 @@ export function Header({
     try {
       await fetch("/api/auth/logout", { method: "POST" });
       await clearUserCache(user?.id);
+      // Bersihkan cache client agar data antar user tidak bocor.
+      invalidateClientCache();
       router.push("/login");
       router.refresh();
     } catch (err) {

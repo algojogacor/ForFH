@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 // Label langkah sync dalam Bahasa Indonesia + urutan fase (untuk persen).
 const PHASES = ["mulai", "jadwal", "kursus", "tugas", "nilai", "info", "selesai"];
@@ -66,7 +67,10 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
   }, []);
 
   const handleRetry = async () => {
-    try { await fetch("/api/campus/sync", { method: "POST" }); } catch { /* dibiarkan */ }
+    try {
+      await fetch("/api/campus/sync", { method: "POST" });
+      invalidateClientCache();
+    } catch { /* dibiarkan */ }
     setStatus({ connected: true, state: "running", step: "mulai" });
   };
 

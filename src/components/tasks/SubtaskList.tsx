@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Plus, Trash2, Clock, CheckCircle2, Circle } from "lucide-react";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function SubtaskList({
   taskId,
@@ -28,6 +29,7 @@ export function SubtaskList({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: newTitle.trim() }),
       });
+      invalidateClientCache();
       setNewTitle("");
       onSubtasksUpdated();
     } catch (err) {
@@ -46,6 +48,7 @@ export function SubtaskList({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ completed: nextCompleted === 1 }),
       });
+      invalidateClientCache();
       onSubtasksUpdated();
     } catch (err) {
       console.error("Failed to toggle subtask:", err);
@@ -55,6 +58,7 @@ export function SubtaskList({
   const handleDelete = async (subtaskId: string) => {
     try {
       await fetch(`/api/subtasks/${subtaskId}`, { method: "DELETE" });
+      invalidateClientCache();
       onSubtasksUpdated();
     } catch (err) {
       console.error("Failed to delete subtask:", err);

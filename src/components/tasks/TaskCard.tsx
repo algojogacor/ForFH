@@ -17,6 +17,7 @@ import { Badge } from "../ui/Badge";
 import { SubtaskList } from "./SubtaskList";
 import { SmartDeadlineModal } from "./SmartDeadlineModal";
 import { formatDateIndonesian, formatRelativeTimeIndonesian } from "@/lib/utils";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function TaskCard({
   task,
@@ -46,6 +47,7 @@ export function TaskCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
       });
+      invalidateClientCache();
       onTaskUpdated();
     } catch (err) {
       console.error("Failed to toggle task:", err);
@@ -78,6 +80,7 @@ export function TaskCard({
             }),
           });
         }
+        invalidateClientCache();
         setShowSubtasks(true);
         onTaskUpdated();
       }

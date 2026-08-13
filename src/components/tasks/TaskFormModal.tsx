@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/Dialog";
 import { useToast } from "../ui/Toast";
 import { TASK_TYPES, TASK_PRIORITIES } from "@/lib/constants";
+import { invalidateClientCache } from "@/lib/client-cache";
 
 export function TaskFormModal({
   open,
@@ -97,6 +98,7 @@ export function TaskFormModal({
         success("Tugas baru berhasil ditambahkan.");
       }
 
+      invalidateClientCache();
       onOpenChange(false);
       onSaved();
     } catch (err) {

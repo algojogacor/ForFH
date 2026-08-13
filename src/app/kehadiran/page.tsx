@@ -6,6 +6,7 @@ import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { AttendanceTable } from "@/components/attendance/AttendanceTable";
 import { AttendanceRecap } from "@/components/attendance/AttendanceRecap";
 import { useToast } from "@/components/ui/Toast";
+import { cachedFetch, invalidateClientCache } from "@/lib/client-cache";
 
 export default function AttendancePage() {
   const { toast, success } = useToast();
@@ -16,8 +17,7 @@ export default function AttendancePage() {
   const fetchAttendance = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/attendance");
-      const data = await res.json();
+      const data = await cachedFetch("/api/attendance");
       setCourseStats(data.courseStats || []);
     } catch (err) {
       console.error("Failed to load attendance:", err);
@@ -29,8 +29,7 @@ export default function AttendancePage() {
   useEffect(() => {
     fetchAttendance();
     // Rekap agregat per MK dari Kampus Kita (sync otomatis)
-    fetch("/api/campus/info")
-      .then((r) => r.json())
+    cachedFetch("/api/campus/info")
       .then((data) => {
         const presensi = (data.items || []).find((i: any) => i.jenis === "presensi");
         if (data.connected && presensi && Array.isArray(presensi.data) && presensi.data.length > 0) {
@@ -52,6 +51,7 @@ export default function AttendancePage() {
           status,
         }),
       });
+      invalidateClientCache();
       success("Kehadiran hari ini berhasil dicatat.");
       fetchAttendance();
     } catch (err) {
