@@ -10,13 +10,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Sesi tidak valid. Silakan login ulang." }, { status: 401 });
   }
 
-  try {
-    const summary = await runCampusSync(session.id, { force: true });
-    return NextResponse.json({ success: true, summary });
-  } catch (error: any) {
+  // Jalankan di background — POST kembali segera; progress dipantau via
+  // /api/campus/sync-status. Lock di runCampusSync mencegah tabrakan.
+  void runCampusSync(session.id, { force: true }).catch(async (error: any) => {
     const message = error?.message || "Sinkronisasi gagal.";
     await markSyncError(session.id, message);
     logger.error(`Campus sync error (user ${session.id}):`, error);
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  });
+  return NextResponse.json({ success: true, started: true });
 }
