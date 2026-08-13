@@ -213,6 +213,7 @@ export default function TasksPage() {
                     onClick={(e) => handleToggleDone(task, e)}
                     className="mt-0.5 text-muted-foreground hover:text-status-success transition-colors shrink-0"
                     title={isDone ? "Tandai belum selesai" : "Tandai selesai"}
+                    aria-label={isDone ? "Tandai belum selesai" : "Tandai selesai"}
                   >
                     {isDone ? (
                       <CheckCircle2 className="h-4 w-4 text-status-success" />
@@ -284,6 +285,7 @@ export default function TasksPage() {
                         onClick={(e) => handleEdit(task, e)}
                         className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-surface-3 transition-colors"
                         title="Edit Tugas"
+                        aria-label="Edit Tugas"
                       >
                         <Edit className="h-3.5 w-3.5" />
                       </button>
@@ -292,6 +294,7 @@ export default function TasksPage() {
                         onClick={(e) => handleDelete(task.id, e)}
                         className="p-1 rounded text-muted-foreground hover:text-status-danger hover:bg-status-danger-subtle transition-colors"
                         title="Hapus Tugas"
+                        aria-label="Hapus Tugas"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -306,6 +309,7 @@ export default function TasksPage() {
                           setActiveMenuId(isMenuOpen ? null : task.id);
                         }}
                         className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+                        aria-label="Menu aksi tugas"
                       >
                         <MoreVertical className="h-4 w-4" />
                       </button>

@@ -64,6 +64,7 @@ export function MobileNav({
           onClick={onOpenQuickCapture}
           className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:opacity-90 active:scale-95 transition-transform shadow-sm"
           title="Tambah Cepat"
+          aria-label="Tambah cepat"
         >
           <Plus className="h-5 w-5" />
         </button>
@@ -89,6 +90,7 @@ export function MobileNav({
         onClick={onOpenCommandMenu}
         className="flex flex-col items-center justify-center min-h-[44px] min-w-[48px] rounded text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors flex-1"
         title="Menu & Perintah"
+        aria-label="Menu dan Perintah"
       >
         <Menu className="h-4 w-4 mb-0.5" />
         <span>Menu</span>

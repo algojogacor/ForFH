@@ -1,0 +1,18 @@
+
+> forfh@1.0.0 dev /app
+> next dev
+
+   ▲ Next.js 15.1.7
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.2:3000
+
+ ✓ Starting...
+ ✓ Ready in 2.2s
+ ○ Compiling /login ...
+ ✓ Compiled /login in 6.4s (639 modules)
+ ✓ Compiled in 745ms (312 modules)
+ GET /login 200 in 7180ms
+ ○ Compiling /api/auth/login ...
+ ✓ Compiled /api/auth/login in 2.1s (829 modules)
+[ERROR] Login error: { code: 'SQLITE_ERROR', rawCode: 1, name: 'LibsqlError' }
+ POST /api/auth/login 500 in 2542ms

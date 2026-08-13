@@ -174,6 +174,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
                       onClick={() => handleToggleTask(task.id)}
                       className="mt-0.5 text-muted-foreground hover:text-status-success transition-colors shrink-0"
                       title="Tandai selesai"
+                      aria-label="Tandai selesai"
                     >
                       <Circle className="h-4 w-4" />
                     </button>

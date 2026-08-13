@@ -70,6 +70,7 @@ export function Header({
           onClick={toggleTheme}
           className="h-8 w-8 rounded-full hover:bg-surface-2 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
           title="Ubah Tema"
+          aria-label="Ubah tema (Terang/Gelap)"
         >
           <Sun className="h-3.5 w-3.5 hidden dark:block text-warning" />
           <Moon className="h-3.5 w-3.5 block dark:hidden text-muted-foreground" />
@@ -80,6 +81,7 @@ export function Header({
           disabled={isLoggingOut}
           className="h-8 w-8 rounded-full hover:bg-status-danger-subtle flex items-center justify-center text-muted-foreground hover:text-status-danger transition-colors"
           title="Keluar"
+          aria-label="Keluar dari akun"
         >
           <LogOut className="h-3.5 w-3.5" />
         </button>

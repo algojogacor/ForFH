@@ -130,6 +130,7 @@ export function TaskCard({
               onClick={() => onEdit(task)}
               className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
               title="Edit Tugas"
+              aria-label="Edit Tugas"
             >
               <Edit className="h-3.5 w-3.5" />
             </button>
@@ -137,6 +138,7 @@ export function TaskCard({
               onClick={() => onDelete(task.id)}
               className="p-1 rounded text-muted-foreground hover:text-status-danger hover:bg-status-danger-subtle transition-colors"
               title="Hapus Tugas"
+              aria-label="Hapus Tugas"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -148,6 +150,7 @@ export function TaskCard({
           <button
             onClick={handleToggleDone}
             className="mt-0.5 text-muted-foreground hover:text-status-success transition-colors shrink-0"
+            aria-label={isDone ? "Tandai tugas belum selesai" : "Tandai tugas selesai"}
           >
             {isDone ? (
               <CheckCircle2 className="h-4 w-4 text-status-success" />
