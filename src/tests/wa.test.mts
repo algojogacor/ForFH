@@ -222,47 +222,83 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
       manager.on("close", opts.onClose ?? (() => {}));
       return { manager, sockets, getCallCount: () => callCount };
     }
+    // Fixture realistis error lastDisconnect: Baileys rc14 SELALU memakai
+    // @hapi/boom (Boom) — status hanya di err.output.statusCode. Plain object
+    // literal (jangan import @hapi/boom di tes; itu cuma transitive dep).
+    function boomError(statusCode: number, message: string): any {
+      return { isBoom: true, output: { statusCode }, message };
+    }
 
     // ensureWaClient idempoten: 3× berurutan → 1 socket
     const m1 = await makeManager({});
     await Promise.all([m1.manager.ensureWaClient(), m1.manager.ensureWaClient(), m1.manager.ensureWaClient()]);
     assert(m1.getCallCount() === 1, "ensureWaClient 3× berurutan → tepat 1 socket (shared startup promise)");
-    // saat state connecting (startup promise aktif) — panggilan lagi → tetap 1 socket
-    assert(m1.getCallCount() === 1, "panggilan saat connecting → shared promise, bukan socket baru");
+    assert(m1.manager.state === "connecting", "ensureWaClient selesai → state connecting (socket belum open)");
 
-    // connect → open; temporary disconnect (408) → reconnect (backoff, 2 socket)
+    // connect → open; temporary disconnect (408, Boom) → reconnect (backoff, 2 socket)
     const m2 = await makeManager({});
     await m2.manager.ensureWaClient();
     m2.sockets[0].handlers["connection.update"]({ connection: "open" });
     assert(m2.manager.state === "open" && m2.manager.isReady(), "connect → state open");
-    m2.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 408 } } });
+    m2.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(408, "Connection was lost") } });
     await new Promise((r) => setTimeout(r, 10));
     assert(m2.getCallCount() === 2, "disconnect temporary (408) → reconnect via backoff");
     assert(m2.manager.fatalReason === null, "temporary → fatalReason tetap null");
 
-    // loggedOut (401) → stop + auth invalid; TANPA recreate
+    // loggedOut (401, Boom) → stop + auth invalid; TANPA recreate
     const m3 = await makeManager({});
     await m3.manager.ensureWaClient();
     m3.sockets[0].handlers["connection.update"]({ connection: "open" });
-    m3.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 401 } } });
+    m3.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(401, "Logged out") } });
     assert(m3.manager.state === "logged_out" && m3.manager.fatalReason === "auth_invalid", "loggedOut (401) → state logged_out + fatal");
     assert(m3.getCallCount() === 1, "loggedOut → TIDAK auto-recreate");
     const keep3 = await waKeepAlive(m3.manager);
     assert(keep3 === "auth-invalid", "waKeepAlive saat auth invalid → auth-invalid (tanpa recreate)");
 
-    // connectionReplaced (440) → stop, TIDAK reconnect
+    // resetFatal: buka kunci fatal (jalur pemulihan Task 7 setelah re-pair)
+    await m3.manager.resetFatal();
+    assert(m3.manager.fatalReason === null && m3.manager.state === "stopped", "resetFatal → kunci fatal dibuka + state stopped");
+    assert((await m3.manager.isAuthInvalid()) === false, "resetFatal → flag auth invalid dibersihkan");
+    await m3.manager.ensureWaClient();
+    assert(m3.getCallCount() === 2, "setelah resetFatal → ensureWaClient init ulang (socket baru)");
+
+    // badSession (500, Boom) → stop fatal auth_invalid + set flag; TANPA recreate
+    const m7 = await makeManager({});
+    await m7.manager.ensureWaClient();
+    m7.sockets[0].handlers["connection.update"]({ connection: "open" });
+    m7.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(500, "Session corrupted") } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(m7.manager.state === "logged_out" && m7.manager.fatalReason === "auth_invalid", "badSession (500) → state logged_out + fatal");
+    assert(m7.getCallCount() === 1, "badSession → TIDAK auto-recreate");
+    assert((await waKeepAlive(m7.manager)) === "auth-invalid", "badSession → flag auth invalid terset (tanpa recreate)");
+
+    // connectionReplaced (440, Boom) → stop, TIDAK reconnect
     const m4 = await makeManager({});
     await m4.manager.ensureWaClient();
-    m4.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 440 } } });
+    m4.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(440, "Connection replaced") } });
     assert(m4.manager.state === "error" && m4.manager.fatalReason === "replaced", "connectionReplaced (440) → stop tanpa reconnect");
     assert(m4.getCallCount() === 1, "connectionReplaced → 1 socket saja");
 
-    // restartRequired (515) → recreate (auth sama)
+    // restartRequired (515, Boom) → recreate (auth sama)
     const m5 = await makeManager({});
     await m5.manager.ensureWaClient();
-    m5.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: { status: 515 } } });
+    m5.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(515, "Restart required") } });
     await new Promise((r) => setTimeout(r, 10));
     assert(m5.getCallCount() === 2, "restartRequired (515) → recreate socket");
+
+    // unavailableService (503, Boom): retry sampai 3 upaya → stop fatal
+    const m8 = await makeManager({});
+    await m8.manager.ensureWaClient();
+    for (let i = 0; i < 3; i++) {
+      m8.sockets[i].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert(m8.getCallCount() === 4, "503 berulang (3 upaya) → retry tanpa fatal");
+    assert(m8.manager.fatalReason === null, "503 belum lewat batas → fatalReason tetap null");
+    m8.sockets[3].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(m8.manager.state === "error" && m8.manager.fatalReason === "unavailable", "503 melewati 3 upaya → stop fatal unavailable");
+    assert(m8.getCallCount() === 4, "503 melewati batas → TIDAK recreate lagi");
 
     // waKeepAlive: open → healthy; dead → ensure (recovered)
     const m6 = await makeManager({});

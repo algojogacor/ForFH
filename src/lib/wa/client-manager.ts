@@ -186,6 +186,18 @@ export class WaClientManager {
   async setAuthInvalidFlag(): Promise<void> { await this.options.persistAuthFlag(true); }
   async clearAuthInvalidFlag(): Promise<void> { await this.options.persistAuthFlag(false); }
 
+  /** Jalur pemulihan setelah re-pair (dipakai Task 7): buka kunci fatal —
+   *  fatalReason di-null, state "stopped", flag auth invalid dibersihkan, dan
+   *  timer pending dibatalkan. Panggil setelah pairing sukses; panggilan
+   *  ensureWaClient() berikutnya akan menginisialisasi socket baru. */
+  async resetFatal(): Promise<void> {
+    this.fatalReason = null;
+    this.state = "stopped";
+    health.recordSocketState("stopped");
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    await this.clearAuthInvalidFlag();
+  }
+
   // ---- internal ----
 
   private async initSocket(): Promise<void> {
@@ -236,7 +248,11 @@ export class WaClientManager {
 
   private async handleClose(update: any): Promise<void> {
     const err = update.lastDisconnect?.error as any;
+    // Baileys rc14 SELALU menutup socket dengan error @hapi/boom (Boom):
+    // status ada di err.output.statusCode — err.status/err.code TIDAK ADA.
+    // Fallback tetap dipertahankan untuk error non-Boom (robustness).
     const statusCode =
+      typeof err?.output?.statusCode === "number" ? err.output.statusCode :
       typeof err?.status === "number" ? err.status :
       typeof err?.code === "number" ? err.code : undefined;
     const classification = classifyDisconnect(statusCode);
