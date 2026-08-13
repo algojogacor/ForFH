@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Receiver } from "@upstash/qstash";
-import { processDueReminders } from "@/lib/notifications/worker";
+import { cleanupOldUsage, processDueReminders } from "@/lib/notifications/worker";
 import { syncDueUsers } from "@/lib/campus/sync";
 import { logger } from "@/lib/logger";
 
@@ -64,6 +64,9 @@ export async function POST(req: NextRequest) {
 
   // Tick sinkronisasi kampus: jalankan di cron yang sama (tanpa jadwal QStash baru)
   const syncResult = await syncDueUsers();
+
+  // Pemeliharaan: buang log pemakaian AI > 90 hari (guard harian di dalam)
+  await cleanupOldUsage();
 
   return NextResponse.json({
     success: true,

@@ -28,6 +28,7 @@ import {
 } from "@/lib/db";
 import type { CampusDataJenis } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { mapLimit } from "@/lib/notifications/worker";
 import { decryptText, encryptText } from "@/lib/crypto/at-rest";
 import { sendPushToUser } from "@/lib/notifications/web-push";
 import { KampusKitaClient } from "./kampuskita";
@@ -434,7 +435,7 @@ export async function syncDueUsers(): Promise<{ synced: number; failed: number; 
     .limit(20);
 
   let synced = 0, failed = 0;
-  for (const acc of due) {
+  await mapLimit(due, 3, async (acc) => {
     try {
       const s = await runCampusSync(acc.userId);
       if (!s.skipped) synced++;
@@ -442,6 +443,6 @@ export async function syncDueUsers(): Promise<{ synced: number; failed: number; 
       failed++;
       await markSyncError(acc.userId, e?.message || "Sinkronisasi otomatis gagal.");
     }
-  }
+  });
   return { synced, failed, skipped: Math.max(0, due.length - synced - failed) };
 }
