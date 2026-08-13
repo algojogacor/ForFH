@@ -27,7 +27,7 @@ export function formatWibDayName(ts: number): string {
 
 export function clampOutput(text: string, max: number = OUTPUT_MAX_CHARS): string {
   if (text.length <= max) return text;
-  return text.slice(0, max - 40) + "\n…ketik !x utk lengkap";
+  return text.slice(0, max - 40) + "\n…ketik !help utk bantuan";
 }
 
 export function formatJadwal(items: JadwalItem[], title: string, hint: string): string {

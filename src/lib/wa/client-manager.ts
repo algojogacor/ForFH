@@ -183,6 +183,16 @@ export class WaClientManager {
     return this.socket.requestPairingCode(phone);
   }
 
+  /** Resolver LID→PN dari internal Baileys (signalRepository.lidMapping).
+   *  Mapping dipelihara Baileys di keystore — application layer tidak
+   *  membuat mapping LID kustom yang konflik. */
+  async getPNForLID(lid: string): Promise<string | null> {
+    try {
+      const pn = await this.socket?.signalRepository?.lidMapping?.getPNForLID(lid);
+      return pn ?? null;
+    } catch { return null; }
+  }
+
   async setAuthInvalidFlag(): Promise<void> { await this.options.persistAuthFlag(true); }
   async clearAuthInvalidFlag(): Promise<void> { await this.options.persistAuthFlag(false); }
 

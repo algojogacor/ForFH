@@ -13,6 +13,9 @@ import type { WaBindingRow } from "../lib/wa/types";
 import { parseCommand } from "../lib/wa/commands";
 import { formatJadwal, formatTugas, formatHelp, clampOutput, formatNotLinked } from "../lib/wa/format";
 import { waRateLimitKey, allowAiReply, resetAiReplyForTests } from "../lib/wa/rate-limit";
+import { processIncomingMessage } from "../lib/wa/pipeline";
+import type { MessageDeps } from "../lib/wa/pipeline";
+import { WaSendService } from "../lib/wa/send";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
 const MEM_DDL = [
@@ -415,5 +418,96 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(allowAiReply("wa:user:u1") === false, "AI interval: pesan kedua < 5 detik → ditolak");
     await new Promise((r) => setTimeout(r, 5100));
     assert(allowAiReply("wa:user:u1") === true, "AI interval: setelah 5 detik → diizinkan lagi");
+  }
+
+  // ===== F1 — Messaging (pure, event mock) + Security =====
+  {
+    function msg(remoteJid: string, text: string, extra: any = {}): any {
+      return { key: { remoteJid, ...extra }, message: { conversation: text } };
+    }
+    const calls: Array<{ jid: string; text: string }> = [];
+    let userIdFor: string | null = "u1";
+    let guideAllowed = true;
+    let msgAllowed = true;
+    let aiAllowed = true;
+    const deps: MessageDeps = {
+      resolveIdentity: async (key) => ({ userId: userIdFor, identity: {}, binding: null }),
+      allowMessage: async () => msgAllowed,
+      allowGuide: async () => guideAllowed,
+      allowAiReply: () => aiAllowed,
+      executeCommand: async (cmd, _args, userId) => `cmd:${cmd}:${userId}`,
+      executeAi: async (userId, text) => `ai:${userId}:${text}`,
+      send: async (jid, text) => { calls.push({ jid, text }); return { sent: true, queued: false }; },
+    };
+
+    // bound sender + command → routed
+    const r1 = await processIncomingMessage(deps, msg("6281@s.whatsapp.net", "!jadwal besok"));
+    assert(r1 === "handled" && calls[0].text.startsWith("cmd:jadwal"), "bound sender + !jadwal → routed ke dispatcher");
+    // bound sender + natural language → AI
+    calls.length = 0;
+    const r2 = await processIncomingMessage(deps, msg("6281@s.whatsapp.net", "ada kelas besok?"));
+    assert(r2 === "handled" && calls[0].text.startsWith("ai:"), "natural language → jalur AI");
+    // unknown sender → panduan (maks 1/jam)
+    calls.length = 0;
+    userIdFor = null;
+    const r3 = await processIncomingMessage(deps, msg("6289@s.whatsapp.net", "halo"));
+    assert(r3 === "guide" && calls[0].text.includes("HUBUNGKAN"), "unknown sender → panduan hubungkan");
+    // kedua kalinya dalam jam yang sama → rate-limited (tanpa balasan)
+    guideAllowed = false;
+    const r4 = await processIncomingMessage(deps, msg("6289@s.whatsapp.net", "halo lagi"));
+    assert(r4 === "rate-limited" && calls.length === 1, "panduan kedua dalam 1 jam → rate-limited (maks 1/jam)");
+    // group diabaikan
+    guideAllowed = true; userIdFor = "u1";
+    const r5 = await processIncomingMessage(deps, msg("123@g.us", "halo"));
+    assert(r5 === "ignored", "pesan grup diabaikan");
+    // broadcast/status diabaikan
+    const r6 = await processIncomingMessage(deps, msg("status@broadcast", "halo"));
+    assert(r6 === "ignored", "pesan broadcast/status diabaikan");
+    // system/non-text (sticker, tanpa conversation) → ignored
+    const r7 = await processIncomingMessage(deps, { key: { remoteJid: "6281@s.whatsapp.net" }, message: { stickerMessage: {} } } as any);
+    assert(r7 === "ignored", "pesan non-teks diabaikan");
+    // keamanan: spoof identity (remoteJid user valid tapi tidak ter-bound) → guide, TIDAK pernah command
+    calls.length = 0;
+    userIdFor = null;
+    const r8 = await processIncomingMessage(deps, msg("628777@s.whatsapp.net", "!selesai 1"));
+    assert(r8 === "guide" && calls[0].text.includes("HUBUNGKAN"), "spoof identity → panduan, command tidak dieksekusi");
+    // rate limit pesan (20/menit) dilanggar → drop tanpa balasan
+    calls.length = 0; userIdFor = "u1"; msgAllowed = false;
+    const r9 = await processIncomingMessage(deps, msg("6281@s.whatsapp.net", "!jadwal"));
+    assert(r9 === "rate-limited" && calls.length === 0, "rate limit 20/menit → drop tanpa balasan");
+    // interval AI 5 detik → pesan kedua ditolak
+    calls.length = 0; msgAllowed = true; aiAllowed = false;
+    const r10 = await processIncomingMessage(deps, msg("6281@s.whatsapp.net", "ceritain dong"));
+    assert(r10 === "rate-limited" && calls.length === 0, "interval AI 5 detik → pesan kedua ditolak");
+  }
+
+  // ===== F1 — Send service (queue D4) =====
+  {
+    class FakeManager {
+      ready = false;
+      sent: Array<{ jid: string; text: string }> = [];
+      handlers: Record<string, (p: any) => void> = {};
+      isReady() { return this.ready; }
+      async sendText(jid: string, text: string) { this.sent.push({ jid, text }); return true; }
+      on(ev: string, cb: (p: any) => void) { this.handlers[ev] = cb; }
+    }
+    const fm = new FakeManager() as any;
+    const svc = new WaSendService(fm);
+    assert(svc.isReady() === false, "send service: manager belum siap");
+    const q1 = await svc.send("a@lid", "pesan 1");
+    assert(q1.queued === true && svc.getQueueLength() === 1, "socket belum siap → pesan masuk queue");
+    // kapasitas 50
+    for (let i = 0; i < 49; i++) await svc.send("a@lid", `pesan ${i}`);
+    const dropped = await svc.send("a@lid", "ke-51");
+    assert(dropped.queued === false && dropped.sent === false && svc.getQueueLength() === 50, "queue maks 50 → ke-51 di-drop (caller terima failure)");
+    // open → flush FIFO
+    fm.ready = true;
+    fm.handlers["open"]({ isNewLogin: false });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(fm.sent.length === 50 && fm.sent[0].text === "pesan 1" && svc.getQueueLength() === 0, "open → queue di-flush FIFO (50 pesan, urutan lama dulu)");
+    // sendStrict tanpa siap → failure seketika
+    fm.ready = false;
+    const strict = await svc.sendStrict("a@lid", "reminder");
+    assert(strict.sent === false && strict.queued === false && svc.getQueueLength() === 0, "sendStrict gagal → tanpa antrean (hindari dobel dengan web push)");
   }
 }
