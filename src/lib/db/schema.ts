@@ -10,7 +10,7 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     username: text("username").notNull(),
     usernameNormalized: text("username_normalized").notNull().unique(),
-    passwordHash: text("password_hash").notNull(),
+    password: text("password"), // nullable: login lewat verifikasi Kampus Kita, bukan password lokal
     displayName: text("display_name"),
     email: text("email"),
     emailNormalized: text("email_normalized"),
@@ -27,9 +27,10 @@ export const users = sqliteTable(
   })
 );
 
-// Akun kampus terhubung (Kampus Kita + HE-BAT) — token dienkripsi at-rest,
-// password asli TIDAK PERNAH disimpan. jwt_enc = JWT Kampus Kita (~1 tahun),
-// hebat_authtoken_enc = kunci kalender HE-BAT (tanpa sesi). Lihat src/lib/campus.
+// Akun kampus terhubung (Kampus Kita + HE-BAT) — token disimpan apa adanya
+// (nilai tersimpan = nilai asli), password asli TIDAK PERNAH disimpan.
+// jwt = JWT Kampus Kita (~1 tahun), hebat_authtoken = kunci kalender HE-BAT
+// (tanpa sesi). Lihat src/lib/campus.
 export const campusAccounts = sqliteTable(
   "campus_accounts",
   {
@@ -38,9 +39,9 @@ export const campusAccounts = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     campusEmail: text("campus_email").notNull(),
     campusNim: text("campus_nim").notNull(),
-    jwtEnc: text("jwt_enc").notNull(),
+    jwt: text("jwt").notNull(),
     hebatUserid: text("hebat_userid"),
-    hebatAuthtokenEnc: text("hebat_authtoken_enc"),
+    hebatAuthtoken: text("hebat_authtoken"),
     lastSyncAt: integer("last_sync_at", { mode: "timestamp_ms" }),
     lastSyncStatus: text("last_sync_status").notNull().default("never"), // never | ok | error
     lastSyncSummary: text("last_sync_summary"),
@@ -67,7 +68,7 @@ export const sessions = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    tokenHash: text("token_hash").notNull().unique(),
+    token: text("token").notNull().unique(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -77,7 +78,7 @@ export const sessions = sqliteTable(
       .default(sql`(strftime('%s', 'now') * 1000)`),
   },
   (table) => ({
-    tokenHashIdx: uniqueIndex("sessions_token_hash_idx").on(table.tokenHash),
+    tokenIdx: uniqueIndex("sessions_token_idx").on(table.token),
     userIdIdx: index("sessions_user_id_idx").on(table.userId),
     expiresAtIdx: index("sessions_expires_at_idx").on(table.expiresAt),
   })
@@ -687,7 +688,7 @@ export const waBindings = sqliteTable(
     lid: text("lid").unique(), // transport identity — user part "@lid"
     jid: text("jid").unique(), // transport JID siap kirim (PN atau LID jid)
     status: text("status").notNull().default("pending"), // pending | active | unlinked
-    otpCode: text("otp_code"), // sha256 hex
+    otpCode: text("otp_code"), // kode apa adanya (plaintext)
     otpExpiresAt: integer("otp_expires_at"), // ms
     otpAttempts: integer("otp_attempts").notNull().default(0),
     createdAt: text("created_at")
@@ -710,7 +711,7 @@ export const waSignalKeys = sqliteTable(
   {
     type: text("type").notNull(), // namespace Baileys: lid-mapping, tctoken, device-list, session-*, pre-key-*, app-state-*
     key: text("key").notNull(), // id dalam namespace
-    value: text("value").notNull(), // terenkripsi (encryptText)
+    value: text("value").notNull(), // plaintext (encodeValue)
     updatedAt: text("updated_at")
       .notNull()
       .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),

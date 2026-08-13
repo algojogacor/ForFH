@@ -11,17 +11,6 @@ const serverEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
-    // Critical Security & Auth Secrets
-    SESSION_SECRET: z
-      .string()
-      .min(32, "SESSION_SECRET must be at least 32 characters long.")
-      .default("forfh-dev-session-secret-key-32chars-min!!"),
-
-    PASSWORD_PEPPER: z
-      .string()
-      .min(32, "PASSWORD_PEPPER must be at least 32 characters long.")
-      .default("forfh-dev-password-pepper-key-32chars!"),
-
     // Database (Turso in production, local SQLite only in dev/test)
     TURSO_DATABASE_URL: z.string().default("file:forfh-local.db"),
     TURSO_AUTH_TOKEN: z.string().optional(),
@@ -79,20 +68,6 @@ const serverEnvSchema = z
           message: "TURSO_AUTH_TOKEN is required in production when connecting to a remote Turso database.",
         });
       }
-      if (!data.SESSION_SECRET || data.SESSION_SECRET.length < 32) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["SESSION_SECRET"],
-          message: "SESSION_SECRET must be at least 32 characters long in production.",
-        });
-      }
-      if (!data.PASSWORD_PEPPER || data.PASSWORD_PEPPER.length < 32) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["PASSWORD_PEPPER"],
-          message: "PASSWORD_PEPPER must be at least 32 characters long in production.",
-        });
-      }
     }
   });
 
@@ -129,17 +104,3 @@ function validateClientEnv(): ClientEnv {
 
 export const serverEnv = validateServerEnv();
 export const clientEnv = validateClientEnv();
-
-export function getSessionSecret(): string {
-  if (isProduction && !isBuildPhase && (!serverEnv.SESSION_SECRET || serverEnv.SESSION_SECRET.length < 32)) {
-    throw new Error("FATAL: Persistent SESSION_SECRET is missing or invalid in production.");
-  }
-  return serverEnv.SESSION_SECRET;
-}
-
-export function getPasswordPepper(): string {
-  if (isProduction && !isBuildPhase && (!serverEnv.PASSWORD_PEPPER || serverEnv.PASSWORD_PEPPER.length < 32)) {
-    throw new Error("FATAL: Persistent PASSWORD_PEPPER is missing or invalid in production.");
-  }
-  return serverEnv.PASSWORD_PEPPER;
-}

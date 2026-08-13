@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, campusAccounts } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
-import { maskEmail } from "@/lib/crypto/at-rest";
+import { maskEmail } from "@/lib/campus/mask";
 
 // Status koneksi kampus untuk halaman Pengaturan (tanpa rahasia apa pun).
 export async function GET() {
@@ -23,7 +23,7 @@ export async function GET() {
     connected: true,
     campusEmail: maskEmail(acc.campusEmail),
     nim: acc.campusNim,
-    hebatConnected: Boolean(acc.hebatUserid && acc.hebatAuthtokenEnc),
+    hebatConnected: Boolean(acc.hebatUserid && acc.hebatAuthtoken),
     lastSyncAt: acc.lastSyncAt,
     lastSyncStatus: acc.lastSyncStatus, // never | ok | error
     lastSyncSummary: acc.lastSyncSummary,

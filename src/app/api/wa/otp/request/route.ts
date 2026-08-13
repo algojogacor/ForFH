@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   }
 
   const otp = String(crypto.randomInt(100000, 1000000));
-  const otpCode = crypto.createHash("sha256").update(otp).digest("hex");
+  const otpCode = otp; // disimpan apa adanya (nilai asli, tanpa hashing)
   const otpExpiresAt = Date.now() + OTP_TTL_MS;
   const nowIso = new Date().toISOString();
 

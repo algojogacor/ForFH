@@ -11,8 +11,9 @@
 //    Presensi TIDAK dipetakan ke baris attendance — datanya agregat tanpa
 //    tanggal, catatan per tanggal tetap manual.
 //
-// Token dienkripsi at-rest (AES-256-GCM, kunci dari SESSION_SECRET) — lihat
-// src/lib/crypto/at-rest.ts. Password tidak pernah tersimpan.
+// Token kampus disimpan plaintext apa adanya (nilai tersimpan = nilai asli).
+// Data lama berformat v1: (AES-256-GCM) di-decrypt sekali jalan saat sync.
+// Password tidak pernah tersimpan.
 import { and, eq, lt, or, isNull, ne } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { db } from "@/lib/db";
@@ -30,7 +31,7 @@ import type { CampusDataJenis } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { memDel } from "@/lib/cache/mem-cache";
 import { mapLimit } from "@/lib/notifications/worker";
-import { decryptText, encryptText } from "@/lib/crypto/at-rest";
+import { decryptLegacyV1, isLegacyV1 } from "@/lib/crypto/legacy-v1";
 import { sendPushToUser } from "@/lib/notifications/web-push";
 import { KampusKitaClient } from "./kampuskita";
 import { fetchIcs, parseIcs } from "./hebat";
@@ -120,6 +121,12 @@ async function findAccount(userId: string) {
   return acc;
 }
 
+// Baca token kampus tersimpan: nilai baru plaintext apa adanya; data lama
+// berformat v1: (terenkripsi AES-256-GCM) di-decrypt.
+export function readToken(stored: string): string {
+  return isLegacyV1(stored) ? decryptLegacyV1(stored) : stored;
+}
+
 // Tulis label langkah sync berjalan (1 query ringan; dipantau UI via sync-status)
 export async function setSyncStep(userId: string, step: string): Promise<void> {
   try {
@@ -170,17 +177,24 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
   try {
     let jwt: string, hebatUserid: string | undefined, hebatToken: string | undefined;
     try {
-      jwt = decryptText(acc.jwtEnc);
+      jwt = readToken(acc.jwt);
     } catch (e) {
       throw new Error("Token Kampus Kita rusak — putuskan lalu hubungkan ulang.");
     }
-    if (acc.hebatAuthtokenEnc) {
+    if (acc.hebatAuthtoken) {
       try {
         hebatUserid = acc.hebatUserid || undefined;
-        hebatToken = decryptText(acc.hebatAuthtokenEnc);
+        hebatToken = readToken(acc.hebatAuthtoken);
       } catch {
-        logger.warn(`sync ${userId}: authtoken HE-BAT tidak bisa didekripsi, dilewati`);
+        logger.warn(`sync ${userId}: authtoken HE-BAT tidak bisa dibaca, dilewati`);
       }
+    }
+    // Migrasi data lama (v1:) → plaintext: tulis ulang sekali jalan.
+    if (isLegacyV1(acc.jwt)) {
+      await db.update(campusAccounts).set({ jwt }).where(eq(campusAccounts.userId, userId)).catch(() => {});
+    }
+    if (acc.hebatAuthtoken && isLegacyV1(acc.hebatAuthtoken) && hebatToken) {
+      await db.update(campusAccounts).set({ hebatAuthtoken: hebatToken }).where(eq(campusAccounts.userId, userId)).catch(() => {});
     }
 
     // Instruksi tugas (section summary) dari crawl saat connect — dipakai untuk
@@ -424,7 +438,7 @@ export async function markSyncError(userId: string, message: string): Promise<vo
 export async function saveHebatToken(userId: string, userid: string, authtoken: string): Promise<void> {
   await db.update(campusAccounts).set({
     hebatUserid: userid,
-    hebatAuthtokenEnc: encryptText(authtoken),
+    hebatAuthtoken: authtoken,
     updatedAt: new Date(),
   }).where(eq(campusAccounts.userId, userId));
 }

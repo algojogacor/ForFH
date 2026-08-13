@@ -15,9 +15,9 @@ ForFH utilizes **Turso (LibSQL)** for distributed SQLite database performance at
 
 ### 2.1 Core Identity & Security
 1. **`users`**: Core user accounts.
-   - `id` (TEXT PK UUID), `username` (TEXT UNIQUE), `username_normalized` (TEXT UNIQUE), `password_hash` (TEXT), `display_name` (TEXT), `email` (TEXT), `phone` (TEXT), `created_at`, `updated_at`.
+   - `id` (TEXT PK UUID), `username` (TEXT UNIQUE), `username_normalized` (TEXT UNIQUE), `password` (TEXT, nullable — tidak terpakai; login hanya via verifikasi Kampus Kita), `display_name` (TEXT), `email` (TEXT), `phone` (TEXT), `created_at`, `updated_at`.
 2. **`sessions`**: Active authentication sessions.
-   - `id` (TEXT PK UUID), `user_id` (FK -> users.id), `token_hash` (TEXT UNIQUE SHA-256), `created_at`, `expires_at`, `last_seen_at`.
+   - `id` (TEXT PK UUID), `user_id` (FK -> users.id), `token` (TEXT UNIQUE — token sesi raw, disimpan apa adanya), `created_at`, `expires_at`, `last_seen_at`.
 3. **`user_settings`**: Per-user preferences and notification configurations.
    - `id` (TEXT PK), `user_id` (FK UNIQUE), `timezone`, `locale`, `theme`, `default_task_reminders`, `default_class_reminders`, `primary_class_alert_minutes`, `deadline_buffer_minutes`, `ai_enabled`, `created_at`, `updated_at`.
 4. **`auth_rate_limits`**: Sliding window IP and username rate limiting.
@@ -46,7 +46,7 @@ ForFH utilizes **Turso (LibSQL)** for distributed SQLite database performance at
     - `id` (PK), `user_id` (FK), `course_id` (FK), `class_date`, `status` (PRESENT / ABSENT / PERMIT / SICK), `notes`, `created_at`.
 15. **`grades`**: Academic evaluation components (Tugas, UTS, UAS, Quiz).
     - `id` (PK), `user_id` (FK), `course_id` (FK), `component_name`, `weight`, `score`, `letter_grade`, `grade_point`, `created_at`, `updated_at`.
-16. **`campus_data`**: Synced recap & campus info from Kampus Kita, one row per `(user_id, jenis)` — plaintext JSON (non-secret; tokens stay encrypted).
+16. **`campus_data`**: Synced recap & campus info from Kampus Kita, one row per `(user_id, jenis)` — plaintext JSON (non-secret; tokens stored as-is).
     - `id` (PK), `user_id` (FK), `jenis` (presensi / pembayaran / dosen_wali / masa_studi / sks_aktif / hist_her / penyerahan_ktm / kalender_akademik), `data_json`, `created_at`, `updated_at`; unique `(user_id, jenis)`.
 
 ### 2.3 Legal Vault & File Storage

@@ -8,22 +8,24 @@ ForFH V4 mengganti login username/password internal dengan **login email kampus*
 
 - **Password tidak pernah disimpan** — hanya hasil login yang disimpan: JWT Kampus
   Kita dan authtoken kalender HE-BAT (Moodle UNAIR).
-- **Enkripsi at-rest (AES-256-GCM)** — token disimpan dalam `campus_accounts`
-  (`jwt_enc`, `hebat_authtoken_enc`) dengan format `v1:<iv>:<tag>:<ct>`. Kunci
-  diturunkan dari `SESSION_SECRET` via HKDF-SHA256 (`src/lib/crypto/at-rest.ts`),
-  sehingga kebocoran DB saja tidak cukup untuk membuka token.
+- **Nilai tersimpan = nilai asli (tanpa enkripsi at-rest)** — token disimpan apa
+  adanya di `campus_accounts` (`jwt`, `hebat_authtoken`). Keputusan app pribadi:
+  tidak ada transformasi antara nilai asli dan isi DB. Data lama berformat `v1:`
+  (AES-256-GCM versi lama) di-decrypt sekali jalan saat dipakai
+  (`src/lib/crypto/legacy-v1.ts`), lalu ditulis ulang plaintext.
 - **Kredensial tidak pernah di-log** — logger global meredaksi password & token;
   client `src/lib/campus/*` tidak menulis token ke log.
 - **`campus_data` plaintext non-rahasia** — rekap presensi & info kampus disimpan
-  tanpa enkripsi (data mahasiswa sendiri, mirip courses/grades); token tetap
-  terenkripsi seperti di atas.
+  apa adanya (data mahasiswa sendiri, mirip courses/grades); token juga plaintext.
 - **Rate limiting** — login kampus & reconnect HE-BAT dibatasi 5 percobaan / 5 menit
   dengan lockout 15 menit (`checkRateLimit`), mencegah brute force.
 - **Anti-enumerasi** — semua kegagalan login kampus (401/404/422) dikembalikan
   sebagai 401 generik; 404 "username is not exist" dari server UNAIR tidak
   diteruskan ke klien (mencegah pengecekan keberadaan email).
-- **Sesi ForFH tetap kuat** — token sesi 32-byte acak, disimpan hanya SHA-256 hash,
-  cookie HttpOnly + Secure + SameSite=Lax + `__Host-` di production.
+- **Sesi ForFH** — token sesi 32-byte acak (64 hex), disimpan apa adanya di
+  `sessions.token` (nilai tersimpan = nilai asli), cookie HttpOnly + Secure +
+  SameSite=Lax + `__Host-` di production. Login ulang diperlukan sekali setelah
+  migrasi ini (token lama ber-hash tidak bisa di-reverse).
 - **Fire-and-forget sync** — sync awal tidak memblokir respons login; error sync
   hanya dicatat (never exposed ke log dengan isi token).
 - **Non-goals (sengaja tidak dilakukan)**: tidak ada enumerasi akun, tidak ada
@@ -32,19 +34,17 @@ ForFH V4 mengganti login username/password internal dengan **login email kampus*
 
 ## 1. Authentication & Credential Storage
 
-### 1.1 Password Hashing Specification
-- **Algorithm**: `crypto.scrypt` with OWASP-recommended parameters:
-  - $N = 16384$ (Cost parameter)
-  - $r = 8$ (Block size)
-  - $p = 1$ (Parallelization)
-  - $\text{keylen} = 64$ bytes
-- **Per-User Salt**: 16 cryptographically secure random bytes generated per user registration.
-- **Server-Wide Pepper**: 32-character minimum secret (`PASSWORD_PEPPER`) applied prior to key derivation.
-- **Constant-Time Verification**: Verification employs `crypto.timingSafeEqual` over derived buffers to eliminate timing side-channel vulnerabilities.
+### 1.1 Password Handling
+- **Password tidak pernah disimpan** — login hanya memverifikasi email + password
+  ke Kampus Kita UNAIR (server UNAIR yang memeriksa). Kolom `users.password`
+  nullable tidak terpakai (scrypt/hashing/pepper dihapus 2026-08 — app pribadi,
+  tanpa transformasi nilai antara asli dan penyimpanan).
 
 ### 1.2 Session Security
 - **Session Tokens**: 32 random bytes (64 hex characters) generating 256 bits of entropy.
-- **One-Way Database Hashing**: Raw tokens are never stored in the database. The database persists only `SHA-256(raw_token)` in `sessions.token_hash`.
+- **Raw Storage**: token sesi disimpan apa adanya di `sessions.token` (nilai asli
+  = nilai tersimpan, tanpa hashing). Trade-off: kebocoran DB memperlihatkan
+  token; diterima untuk app pribadi (keputusan 2026-08).
 - **Cookie Flags**:
   - `HttpOnly`: Mitigates XSS token exfiltration.
   - `Secure`: Transmitted strictly over HTTPS in production.

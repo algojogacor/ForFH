@@ -12,7 +12,7 @@
 | :--- | :--- | :--- |
 | **Framework** | Next.js 15.1.7 (App Router), React 19, TypeScript 5.7 | Next.js 15 on Vercel Serverless |
 | **Database** | LibSQL / Turso via `@libsql/client` & `drizzle-orm` | Hosted Turso DB with Drizzle Migrations |
-| **Authentication** | High-entropy session tokens, SHA-256 token hashing in DB, `scrypt` password hashing + per-user salt + `PASSWORD_PEPPER`, HttpOnly cookies | Hardened multi-instance session security, fail-fast secrets |
+| **Authentication** | High-entropy session tokens disimpan RAW di DB (nilai asli = nilai tersimpan, tanpa hashing), login hanya via verifikasi Kampus Kita (password tidak pernah disimpan), HttpOnly cookies | Hardened session isolation, tanpa secret tambahan (SESSION_SECRET/PASSWORD_PEPPER dihapus 2026-08) |
 | **AI Routing** | Groq (`openai/gpt-oss-120b`, 2 key slots) &rarr; Ollama Cloud (`gpt-oss:120b-cloud`, 2 key slots) &rarr; MiniMax M3 Cloud fallback | Strict Zod validation, single-attempt JSON repair guard, circuit breaker cooldown, graceful app degradation |
 | **Google Drive** | Centralized Google Drive (OAuth2 refresh token) with per-user folder hierarchy | Resumable direct upload, server-side Drive API verification, strict quota and user isolation |
 | **Legal Engine** | Pasal.id REST API (`/search`, `/laws/{frbr_uri}`) | Fail-closed in production, zero mock fallback in prod, Indonesian error messaging |
@@ -30,10 +30,11 @@
    - *Risk:* In production on Vercel, serverless instances write to ephemeral local SQLite files that discard data upon container recycling.
    - *Required Fix:* In production (`NODE_ENV === "production"`), if `TURSO_DATABASE_URL` or `TURSO_AUTH_TOKEN` is missing, throw an immediate fatal error and fail fast.
 
-2. **Runtime Random Secret Generation in Production**
+2. **Runtime Random Secret Generation in Production** — *RESOLVED 2026-08*
    - *Findings:* `src/lib/env.ts` lines 79–99 fallback to `crypto.randomBytes(32)` if `SESSION_SECRET` or `PASSWORD_PEPPER` is not defined or is too short.
    - *Risk:* Each Vercel serverless worker generates a distinct in-memory secret; user sessions created on Worker A are invalidated on Worker B, and user passwords hashed on one instance become unverifiable on another.
    - *Required Fix:* Fail fast immediately on server boot if `SESSION_SECRET` or `PASSWORD_PEPPER` is missing in production.
+   - *2026-08:* `SESSION_SECRET` & `PASSWORD_PEPPER` **dihapus total** (app pribadi — tidak ada enkripsi at-rest/hashing password). Penyimpanan = nilai asli; risiko item ini tidak lagi berlaku.
 
 3. **Cross-User Authorization Vulnerabilities Across Entity Endpoints**
    - *Findings:*
@@ -130,7 +131,7 @@
 
 ## 3. Immediate Action Plan
 
-1. **Step 1 — Environment & Database Configuration**: Fix `src/lib/env.ts` and `src/lib/db/index.ts` to enforce Turso in production, fail fast on missing secrets (`SESSION_SECRET`, `PASSWORD_PEPPER`), and separate client/server envs.
+1. **Step 1 — Environment & Database Configuration**: Fix `src/lib/env.ts` and `src/lib/db/index.ts` to enforce Turso in production, fail fast on missing secrets (2026-08: `SESSION_SECRET`/`PASSWORD_PEPPER` sudah dihapus — tidak relevan lagi), and separate client/server envs.
 2. **Step 2 — Drizzle Migrations & Remove Runtime DDL**: Generate migration files, remove repeated `initializeDatabaseSchema()` calls from production runtime paths.
 3. **Step 3 — Cross-User Authorization Pass**: Update all API routes (`courses`, `tasks`, `subtasks`, `notes`, `exams`, `attendance`, `grades`, `readings`, `terms`, `files`, `legal`) to enforce ownership and parent validation.
 4. **Step 4 — Google Drive Hardening**: Implement server-side file metadata verification against Google Drive API; eliminate mock upload URLs in production; update UI copy.

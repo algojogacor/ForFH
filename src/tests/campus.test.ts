@@ -1,6 +1,9 @@
 // Tes murni (tanpa DB, tanpa jaringan) untuk lapisan sinkronisasi kampus:
-// enkripsi at-rest, client HE-BAT (parse iCal), dan pemetaan Kampus Kita.
-import { encryptText, decryptText, maskEmail } from "../lib/crypto/at-rest";
+// penyimpanan plaintext, client HE-BAT (parse iCal), dan pemetaan Kampus Kita.
+import { maskEmail } from "../lib/campus/mask";
+import { readToken } from "../lib/campus/sync";
+import { isLegacyV1 } from "../lib/crypto/legacy-v1";
+import { encryptV1Fixture, TEST_LEGACY_SECRET } from "./v1-fixture";
 import { parseIcs, HebatError, assertCalendarSessionAlive, collectCrawlResults } from "../lib/campus/hebat";
 import {
   icsTimestampToMs,
@@ -124,19 +127,17 @@ const FIXTURE_PIH = `<html><body>
 </body></html>`;
 
 export async function runCampusTests(assert: (condition: boolean, name: string) => void) {
-  console.log("  ── Campus sync (enkripsi at-rest) ──");
-  const plain = "eyJhbGciOiJIUzI1NiJ9.rahasia-token";
-  const enc = encryptText(plain);
-  assert(enc.startsWith("v1:"), "format rekaman v1:iv:tag:ct");
-  assert(enc !== plain, "ciphertext berbeda dari plaintext");
-  assert(decryptText(enc) === plain, "roundtrip decrypt mengembalikan plaintext");
-  let threw = false;
-  try {
-    decryptText("v2:abcd");
-  } catch {
-    threw = true;
-  }
-  assert(threw, "payload format salah ditolak");
+  console.log("  ── Campus sync (penyimpanan plaintext) ──");
+  // Nilai tersimpan = nilai asli: readToken meneruskan plaintext apa adanya
+  // dan men-decrypt payload lama berformat v1: (AES-256-GCM — at-rest lama)
+  // ke nilai aslinya.
+  process.env.SESSION_SECRET = TEST_LEGACY_SECRET;
+  const plain = "eyJhbGciOiJIUzI1NiJ9.plain-jwt";
+  assert(readToken(plain) === plain, "readToken: nilai plaintext diteruskan apa adanya");
+  const legacy = encryptV1Fixture("JWT-LAMA-DARI-ENKRIPSI-AT-REST");
+  assert(isLegacyV1(legacy), "isLegacyV1: payload v1: dikenali");
+  assert(readToken(legacy) === "JWT-LAMA-DARI-ENKRIPSI-AT-REST", "readToken: payload v1: di-decrypt ke nilai asli");
+  assert(!isLegacyV1("plaintext-tanpa-prefiks"), "isLegacyV1: nilai biasa bukan v1:");
   assert(maskEmail("aryarizky@student.unair.ac.id") === "ary***@student.unair.ac.id", "maskEmail menyamarkan email");
 
   console.log("  ── Campus sync (parse iCal) ──");

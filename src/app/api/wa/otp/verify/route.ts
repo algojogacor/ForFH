@@ -1,5 +1,4 @@
 // src/app/api/wa/otp/verify/route.ts
-import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db, waBindings } from "@/lib/db";
@@ -30,7 +29,7 @@ export async function POST(req: NextRequest) {
   if (Date.now() > binding.otpExpiresAt) return NextResponse.json({ error: "Kode kedaluwarsa. Minta kode baru." }, { status: 410 });
   if (binding.otpAttempts >= 3) return NextResponse.json({ error: "Terlalu banyak percobaan. Minta kode baru." }, { status: 429 });
 
-  const matches = crypto.createHash("sha256").update(otp).digest("hex") === binding.otpCode;
+  const matches = otp === binding.otpCode; // perbandingan langsung ke nilai asli
   if (!matches) {
     await db.update(waBindings)
       .set({ otpAttempts: binding.otpAttempts + 1, updatedAt: new Date().toISOString() })
