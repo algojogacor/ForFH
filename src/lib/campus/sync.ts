@@ -392,6 +392,7 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
       updatedAt: new Date(),
     }).where(eq(campusAccounts.userId, userId));
     memDel(`campus-info:${userId}`);
+    memDel(`tasks:${userId}`);
     await setSyncStep(userId, "selesai");
     return summary;
   } finally {
@@ -416,6 +417,7 @@ export async function markSyncError(userId: string, message: string): Promise<vo
     updatedAt: new Date(),
   }).where(eq(campusAccounts.userId, userId));
   memDel(`campus-info:${userId}`);
+  memDel(`tasks:${userId}`);
 }
 
 // Export untuk reconnect HE-BAT: simpan authtoken baru

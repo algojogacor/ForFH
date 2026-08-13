@@ -28,6 +28,9 @@ interface SyncStatus {
 export function SyncProgressCard({ className = "" }: { className?: string }) {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [polling, setPolling] = useState(false);
+  // Dinaikkan saat retry: efek polling berhenti sendiri saat status idle/error,
+  // jadi retry harus menjalankan ulang efek supaya kartu mengikuti sync baru.
+  const [pollRestart, setPollRestart] = useState(0);
 
   // Polling 2 detik: terus berjalan selama masih "running", berhenti sendiri
   // saat idle dan tidak ada transisi selesai yang perlu ditampilkan.
@@ -41,7 +44,7 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
       active = true;
       try {
         const res = await fetch("/api/campus/sync-status", { cache: "no-store" });
-        if (!res.ok) { setPolling(false); return; }
+        if (!res.ok) { if (cancelled) return; setPolling(false); return; }
         const data: SyncStatus = await res.json();
         if (cancelled) return;
         setStatus(data);
@@ -56,6 +59,7 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
           setPolling(false);
         }
       } catch {
+        if (cancelled) return; // unmount — jangan setState lagi
         setPolling(false); // server tidak terjangkau — berhenti diam-diam
       } finally {
         active = false;
@@ -64,12 +68,15 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
 
     tick();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, []);
+  }, [pollRestart]);
 
   const handleRetry = async () => {
     try {
       await fetch("/api/campus/sync", { method: "POST" });
       invalidateClientCache();
+      // Efek polling berhenti saat status error — nyalakan ulang supaya kartu
+      // mengikuti sync baru (fetch pertama langsung jalan, bukan nunggu 2 detik).
+      setPollRestart((n) => n + 1);
     } catch { /* dibiarkan */ }
     setStatus({ connected: true, state: "running", step: "mulai" });
   };

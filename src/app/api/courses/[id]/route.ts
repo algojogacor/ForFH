@@ -14,6 +14,7 @@ import {
   legalBookmarks,
 } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
+import { memDel } from "@/lib/cache/mem-cache";
 
 export async function GET(
   req: NextRequest,
@@ -148,6 +149,8 @@ export async function PUT(
     })
     .where(and(eq(courses.id, courseId), eq(courses.userId, user.id)));
 
+  // Nama kursus di-embed di GET /api/tasks — invalidasi cache tasks user.
+  memDel(`tasks:${user.id}`);
   return NextResponse.json({ success: true });
 }
 
@@ -166,5 +169,8 @@ export async function DELETE(
     .delete(courses)
     .where(and(eq(courses.id, courseId), eq(courses.userId, user.id)));
 
+  // Kursus dihapus — tugas terkait (dan nama kursus di dalamnya) ikut lenyap,
+  // invalidasi cache tasks user.
+  memDel(`tasks:${user.id}`);
   return NextResponse.json({ success: true });
 }
