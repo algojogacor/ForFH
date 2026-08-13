@@ -29,13 +29,6 @@ export interface SessionUser {
 }
 
 /**
- * Computes SHA-256 hash of raw session token for database lookup
- */
-export function hashSessionToken(token: string): string {
-  return crypto.createHash("sha256").update(token).digest("hex");
-}
-
-/**
  * Generates a high-entropy 256-bit random session token
  */
 export function generateSessionToken(): string {
@@ -43,11 +36,11 @@ export function generateSessionToken(): string {
 }
 
 /**
- * Creates a new high-entropy session in the database
+ * Creates a new high-entropy session in the database — token disimpan
+ * apa adanya (nilai tersimpan = nilai asli, tanpa hashing).
  */
 export async function createSession(userId: string): Promise<{ token: string; expiresAt: Date }> {
   const rawToken = generateSessionToken();
-  const tokenHash = hashSessionToken(rawToken);
   const sessionId = crypto.randomUUID();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
@@ -55,7 +48,7 @@ export async function createSession(userId: string): Promise<{ token: string; ex
   await db.insert(sessions).values({
     id: sessionId,
     userId,
-    tokenHash,
+    token: rawToken,
     createdAt: now,
     expiresAt,
     lastSeenAt: now,
@@ -72,11 +65,10 @@ export async function validateSession(rawToken: string | null | undefined): Prom
     return null;
   }
 
-  const tokenHash = hashSessionToken(rawToken);
   const now = new Date();
 
   const foundSession = await db.query.sessions.findFirst({
-    where: and(eq(sessions.tokenHash, tokenHash), gt(sessions.expiresAt, now)),
+    where: and(eq(sessions.token, rawToken), gt(sessions.expiresAt, now)),
   });
 
   if (!foundSession) {
@@ -164,8 +156,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
  */
 export async function invalidateSession(rawToken: string | null | undefined): Promise<void> {
   if (!rawToken) return;
-  const tokenHash = hashSessionToken(rawToken);
-  await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+  await db.delete(sessions).where(eq(sessions.token, rawToken));
 }
 
 /**

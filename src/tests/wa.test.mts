@@ -8,6 +8,7 @@ import { classifyDisconnect, nextBackoffDelayMs, WaClientManager, waKeepAlive } 
 import { computeHealth, getHealthIndicators, resetHealthForTests } from "../lib/wa/health";
 import type { WaHealthIndicators } from "../lib/wa/types";
 import { normalizePhone, maskPhone } from "../lib/wa/normalize";
+import { encryptV1Fixture, TEST_LEGACY_SECRET } from "./v1-fixture";
 import { collectCandidateJids, resolveWhatsAppIdentity, resolveWhatsAppTarget } from "../lib/wa/identity";
 import type { WaBindingRow } from "../lib/wa/types";
 import { dispatchCommand, parseCommand } from "../lib/wa/commands";
@@ -83,7 +84,7 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     // HARUS mengembalikan Buffer sejati.
     assert(Buffer.isBuffer(restored.creds.noiseKey?.private) && Buffer.isBuffer(restored.creds.noiseKey?.public), "creds round-trip: Buffer di-restore sebagai Buffer (bukan {type:Buffer,data})");
     const rawRow = await memDb.select().from(dbSchema.appConfig).where(eq(dbSchema.appConfig.key, "wa_creds")).limit(1).then((r) => r[0]);
-    assert(!!rawRow && !rawRow.value.includes("62812"), "creds tersimpan terenkripsi (plaintext tidak tampil)");
+    assert(!!rawRow && rawRow.value.includes("62812"), "creds tersimpan plaintext (nilai asli tampil di DB)");
 
     // Row LAMA berformat {type:"Buffer",data:[...]} (terpolusi pre-fix) tetap
     // di-revive jadi Buffer — migrasi mulus tanpa reset manual.
@@ -91,6 +92,16 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     await store.saveCreds(legacyCreds);
     const restoredLegacy = await store.loadAuthState();
     assert(Buffer.isBuffer(restoredLegacy.creds.noiseKey?.private) && Buffer.isBuffer(restoredLegacy.creds.noiseKey?.public), "creds round-trip: format lama {type:Buffer,data} di-revive jadi Buffer");
+
+    // Migrasi data lama: baris v1: (AES-256-GCM — format at-rest lama) di-decrypt
+    // saat load ke nilai asli, lalu ditulis ulang plaintext — sekali jalan.
+    process.env.SESSION_SECRET = TEST_LEGACY_SECRET;
+    const encBefore = await memDb.select().from(dbSchema.appConfig).where(eq(dbSchema.appConfig.key, "wa_creds")).limit(1).then((r) => r[0]);
+    await memDb.update(dbSchema.appConfig).set({ value: encryptV1Fixture(encBefore!.value) }).where(eq(dbSchema.appConfig.key, "wa_creds"));
+    const migrated = await store.loadAuthState();
+    assert(migrated.creds.me?.id === "62812@lid", "creds v1: di-decrypt ke nilai asli saat load");
+    const afterMigrate = await memDb.select().from(dbSchema.appConfig).where(eq(dbSchema.appConfig.key, "wa_creds")).limit(1).then((r) => r[0]);
+    assert(!!afterMigrate && !afterMigrate.value.startsWith("v1:"), "creds v1: ditulis ulang plaintext (migrasi-on-read)");
 
     // save/load key per namespace
     await store.set({ "lid-mapping:lidA": "628111" });

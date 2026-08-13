@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import { db, users, campusAccounts } from "@/lib/db";
 import { createSession, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
-import { encryptText } from "@/lib/crypto/at-rest";
 import { loginCampus, KampusKitaClient, KampusKitaError } from "@/lib/campus/kampuskita";
 import { connectHebat } from "@/lib/campus/hebat";
 import { runCampusSync, saveHebatToken, markSyncError } from "@/lib/campus/sync";
@@ -11,7 +10,7 @@ import { logger } from "@/lib/logger";
 
 // Login satu-satunya: email kampus + password (sama dengan Kampus Kita).
 // Password tidak pernah disimpan — hasil login (JWT KK, authtoken HE-BAT)
-// disimpan terenkripsi at-rest. Akun dibuat otomatis dari email pertama kali.
+// disimpan apa adanya. Akun dibuat otomatis dari email pertama kali.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -59,7 +58,6 @@ export async function POST(req: NextRequest) {
         id,
         username: localPart || nim,
         usernameNormalized: (localPart || nim).toLowerCase(),
-        passwordHash: "unused:campuskita-auth", // login hanya lewat kampus; kolom NOT NULL
         displayName: localPart || nim,
         email: emailNormalized,
         emailNormalized,
@@ -68,19 +66,19 @@ export async function POST(req: NextRequest) {
       if (!user) throw new Error("Gagal membuat akun pengguna.");
     }
 
-    // 3. Simpan akun kampus terenkripsi (upsert)
-    const jwtEnc = encryptText(campusLogin.jwt);
+    // 3. Simpan akun kampus (upsert)
+    const jwt = campusLogin.jwt;
     const existingAcc = await db.query.campusAccounts.findFirst({ where: eq(campusAccounts.userId, user.id) });
     if (existingAcc) {
       await db.update(campusAccounts)
-        .set({ campusEmail: emailNormalized, campusNim: nim, jwtEnc, updatedAt: new Date() })
+        .set({ campusEmail: emailNormalized, campusNim: nim, jwt, updatedAt: new Date() })
         .where(eq(campusAccounts.userId, user.id));
     } else {
       await db.insert(campusAccounts).values({
         userId: user.id,
         campusEmail: emailNormalized,
         campusNim: nim,
-        jwtEnc,
+        jwt,
         lastSyncStatus: "never",
       });
     }

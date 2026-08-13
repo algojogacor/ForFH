@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import type { AuthenticationCreds, AuthenticationState, SignalKeyStore } from "@whiskeysockets/baileys";
 import * as schema from "@/lib/db/schema";
-import { decryptText, encryptText } from "@/lib/crypto/at-rest";
+import { decryptLegacyV1, isLegacyV1 } from "@/lib/crypto/legacy-v1";
 import { logger } from "@/lib/logger";
 
 export const WA_CREDS_KEY = "wa_creds";
@@ -76,14 +76,21 @@ export class WaSessionStore implements SignalKeyStore {
 
   constructor(private readonly db: LibSQLDatabase<typeof schema>) {}
 
-  /** Baca creds terenkripsi dari app_config; tanpa baris → initAuthCreds() baru. */
+  /** Baca creds dari app_config; tanpa baris → initAuthCreds() baru. */
   async loadAuthState(): Promise<AuthenticationState> {
     const row = await this.db
       .select().from(schema.appConfig)
       .where(eq(schema.appConfig.key, WA_CREDS_KEY)).limit(1).then((r) => r[0]);
     if (!row) return { creds: (await getInitAuthCreds())(), keys: this };
     try {
-      return { creds: deserializeCreds(decryptText(row.value)), keys: this };
+      if (isLegacyV1(row.value)) {
+        // Migrasi data lama terenkripsi (v1: AES-256-GCM) → plaintext; disimpan
+        // ulang sekali jalan.
+        const creds = deserializeCreds(decryptLegacyV1(row.value));
+        await this.saveCreds(creds);
+        return { creds, keys: this };
+      }
+      return { creds: deserializeCreds(row.value), keys: this };
     } catch (err) {
       logger.warn("wa_creds korup — memulai auth state baru", err);
       return { creds: (await getInitAuthCreds())(), keys: this };
@@ -91,13 +98,13 @@ export class WaSessionStore implements SignalKeyStore {
   }
 
   async saveCreds(creds: AuthenticationCreds): Promise<void> {
-    const payload = encryptText(serializeCreds(creds));
+    const payload = serializeCreds(creds);
     await this.db
       .insert(schema.appConfig).values({ key: WA_CREDS_KEY, value: payload })
       .onConflictDoUpdate({ target: schema.appConfig.key, set: { value: payload } });
   }
 
-  /** Batch SELECT per namespace + decrypt. Value hilang = tidak ada. */
+  /** Batch SELECT per namespace + decode. Value hilang = tidak ada. */
   async get(type: string, ids: string[]): Promise<Record<string, any>> {
     if (!ids.length) return {};
     const out: Record<string, any> = {};
@@ -113,8 +120,11 @@ export class WaSessionStore implements SignalKeyStore {
         .select().from(schema.waSignalKeys)
         .where(and(eq(schema.waSignalKeys.type, type), inArray(schema.waSignalKeys.key, missing)));
       for (const row of rows) {
-        try { out[row.key] = decodeValue(decryptText(row.value)); }
-        catch (err) { logger.warn("gagal dekripsi signal key", { type, key: row.key }, err); }
+        try {
+          out[row.key] = isLegacyV1(row.value)
+            ? decodeValue(decryptLegacyV1(row.value))
+            : decodeValue(row.value);
+        } catch (err) { logger.warn("gagal decode signal key", { type, key: row.key }, err); }
       }
     }
     return out;
@@ -179,12 +189,11 @@ export class WaSessionStore implements SignalKeyStore {
         await this.db.delete(schema.waSignalKeys)
           .where(and(eq(schema.waSignalKeys.type, type), eq(schema.waSignalKeys.key, key)));
       } else {
-        const encoded = encryptText(v);
         await this.db
-          .insert(schema.waSignalKeys).values({ type, key, value: encoded })
+          .insert(schema.waSignalKeys).values({ type, key, value: v })
           .onConflictDoUpdate({
             target: [schema.waSignalKeys.type, schema.waSignalKeys.key],
-            set: { value: encoded },
+            set: { value: v },
           });
       }
     }

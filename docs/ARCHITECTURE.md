@@ -42,20 +42,20 @@ graph TD
 - **Runtime Guard**: Local SQLite files (`file:`) are strictly blocked in production runtime.
 
 ### 2.3 Authentication & Session Management
-- **Login Kampus (pengganti total username/password internal)**: `/api/auth/login` menerima email kampus + password, memverifikasi ke Kampus Kita UNAIR (`POST /auth/login`, UA `Dart/3.3`), dan otomatis membuat user ForFH dari email pertama kali. `password_hash` diisi sentinel tak terpakai (login hanya lewat kampus).
-- **Stateless Session Cookies**: High-entropy 256-bit random tokens (64 hex characters) stored in HttpOnly, Secure, SameSite=Lax cookie (`__Host-forfh-session` in production, `forfh-session` in development).
-- **Database Token Hashing**: Database stores only SHA-256 hashes (`token_hash`) of session tokens.
+- **Login Kampus (pengganti total username/password internal)**: `/api/auth/login` menerima email kampus + password, memverifikasi ke Kampus Kita UNAIR (`POST /auth/login`, UA `Dart/3.3`), dan otomatis membuat user ForFH dari email pertama kali. Kolom `password` nullable tidak terpakai (login hanya lewat kampus).
+- **Session Cookies**: High-entropy 256-bit random tokens (64 hex characters) stored in HttpOnly, Secure, SameSite=Lax cookie (`__Host-forfh-session` in production, `forfh-session` in development).
+- **Raw Session Token Storage**: token sesi disimpan apa adanya di `sessions.token` (nilai asli = nilai tersimpan, tanpa hashing — keputusan app pribadi).
 - **Rate Limiting**: Database-backed sliding window rate limiting pada `/api/auth/login` (kampus) & `/api/campus/hebat` (5 attempts / 5 mins, 15 min lockout).
 
 ### 2.7 Campus Sync Layer (Kampus Kita + HE-BAT)
 - **`src/lib/campus/kampuskita.ts`** — client API Kampus Kita (JWT via header `Set-Cookie token=`, auth `Bearer` + `?token=`): `jadwal()`, `presensi()`, `semesters()`, `khs(id)`, `status()`, `pesertaMataKuliah()`, `kalenderAkademik()`, `pembayaran()`, `dosenWali()`, `masaStudi()`, `sksAktif()`, `histHer()`, `penyerahanKtm()`.
-- **`src/lib/campus/hebat.ts`** — login form Moodle standar (logintoken CSRF) sekali saat connect → scrape `#calendarexporturl` → simpan `authtoken` terenkripsi. Sync berikutnya pakai `export_execute.php?authtoken=...` tanpa sesi; `parseIcs` mengurai iCal.
+- **`src/lib/campus/hebat.ts`** — login form Moodle standar (logintoken CSRF) sekali saat connect → scrape `#calendarexporturl` → simpan `authtoken` apa adanya. Sync berikutnya pakai `export_execute.php?authtoken=...` tanpa sesi; `parseIcs` mengurai iCal.
 - **`src/lib/campus/mappings.ts`** — pemetaan murni (iCal → tasks, jadwal KK → courses/class_schedules, KHS → grades, presensi KK → rekap per MK) dengan konvensi field UPPERCASE_SNAKE; deterministic & diuji.
 - **`src/lib/campus/sync.ts`** — `runCampusSync(userId, {force})` idempoten: upsert by `external_id` (UID iCal / kode MK), link course by kode, notifikasi push untuk tugas baru (dedupe `notification_deliveries` offset 0), throttle 30 menit (`FORFH_SYNC_INTERVAL_MIN`). Selain itu meng-upsert **`campus_data`** (8 jenis, toleran per jenis): rekap presensi (agregat per MK) + pembayaran, dosen wali, masa studi, SKS aktif, HER, KTM, kalender akademik.
 - **`src/app/api/campus/info/route.ts`** — GET read-only seluruh `campus_data` user (`{connected, lastSyncAt, items:[{jenis, data, updatedAt}]}`); halaman `/info-kampus` menampilkannya, halaman `/kehadiran` memfilter jenis `presensi`.
 - **Cron**: tick `syncDueUsers()` berjalan di webhook QStash `internal/reminders/process` yang sama (tanpa jadwal baru), per-user try/catch, cap 20 user/tick.
 - **Presensi KK disinkronkan sebagai rekap agregat** (`campus_data`, jenis `presensi`); tidak dipetakan ke baris `attendance` (tetap manual per tanggal di halaman Kehadiran).
-- **Token terenkripsi at-rest**: AES-256-GCM (kunci HKDF dari `SESSION_SECRET`) — lihat `docs/SECURITY.md` §0.
+- **Token plaintext at-rest**: nilai asli disimpan apa adanya (`jwt`, `hebat_authtoken`); data lama berformat `v1:` di-decrypt sekali jalan via `src/lib/crypto/legacy-v1.ts` — lihat `docs/SECURITY.md` §0.
 
 ### 2.4 AI Routing & Graceful Degradation
 - **Provider Priority Pipeline**:
