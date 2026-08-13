@@ -120,7 +120,7 @@ export class WaSessionStore implements SignalKeyStore {
    *  dulu. Commit berurutan (2 key lid-mapping — biaya trivial). Throw → dibuang. */
   async transaction<T>(fn: (store: SignalKeyStore) => Promise<T>, _type?: string): Promise<T> {
     const outer = this.pending;
-    this.pending = outer ?? new Map();
+    const myMap = this.pending = outer ?? new Map();
     try {
       const result = await fn(this);
       // Commit berurutan. set() yang mendarat SELAMA commit (mis. event pesan
@@ -138,7 +138,13 @@ export class WaSessionStore implements SignalKeyStore {
       }
       return result;
     } finally {
-      this.pending = outer;
+      // Token guard reentrancy (I1): restore HANYA bila pending masih map
+      // milik kita. Transaksi kedua (T2) yang mulai saat T1 masih drain berbagi
+      // pending map yang sama (outer ?? new Map()); bila T1 menutup pending
+      // lebih dulu, finally T2 TIDAK boleh mengembalikan map stale — ops T2
+      // yang mendarat saat drain T1 tetap ter-commit, dan set() berikutnya
+      // tidak pernah menumpuk di map mati (silent data loss).
+      if (this.pending === myMap) this.pending = outer;
     }
   }
 

@@ -65,6 +65,34 @@ export interface ReminderPayload {
   waText: string;
 }
 
+export interface WaReminderDeps {
+  resolveTarget?: (binding: { jid?: string | null; lid?: string | null; phone: string }) => Promise<string | null>;
+  sendStrict?: (jid: string, text: string) => Promise<{ sent: boolean }>;
+}
+
+/** Blok WA sendReminder — try/catch penuh (I4): throw apa pun (satu-satunya
+ *  jalur realistis: dynamic import Baileys di resolveWhatsAppTarget) → false,
+ *  sehingga `if (!waSent)` di sendReminder tetap menjalankan fallback web push
+ *  (tanpa try/catch, error menembus dan notifikasi hilang utuh). */
+export async function trySendWaReminder(
+  binding: { jid?: string | null; lid?: string | null; phone: string },
+  waText: string,
+  deps: WaReminderDeps = {},
+): Promise<boolean> {
+  try {
+    const target = await (deps.resolveTarget ?? resolveWhatsAppTarget)(binding);
+    if (target) {
+      // sendStrict: tanpa queue — gagal lama/cepat sama-sama failure seketika
+      // (hindari pesan tertunda yang jadi dobel dengan fallback web push)
+      const res = await (deps.sendStrict ?? getWaSendService().sendStrict)(target, waText);
+      return res.sent;
+    }
+  } catch (err) {
+    logger.warn("wa: kirim reminder gagal — fallback web push", err);
+  }
+  return false;
+}
+
 export async function sendReminder(
   userId: string,
   payload: ReminderPayload
@@ -75,13 +103,7 @@ export async function sendReminder(
 
   let waSent = false;
   if (binding) {
-    const target = await resolveWhatsAppTarget(binding);
-    if (target) {
-      // sendStrict: tanpa queue — gagal lama/cepat sama-sama failure seketika
-      // (hindari pesan tertunda yang jadi dobel dengan fallback web push)
-      const res = await getWaSendService().sendStrict(target, payload.waText);
-      waSent = res.sent;
-    }
+    waSent = await trySendWaReminder(binding, payload.waText);
   }
 
   let pushSent = 0;

@@ -17,8 +17,9 @@ import { waRateLimitKey, allowAiReply, resetAiReplyForTests } from "../lib/wa/ra
 import { processIncomingMessage } from "../lib/wa/pipeline";
 import type { MessageDeps } from "../lib/wa/pipeline";
 import { WaSendService } from "../lib/wa/send";
-import { decideDeliveryChannel } from "../lib/notifications/worker";
+import { decideDeliveryChannel, trySendWaReminder } from "../lib/notifications/worker";
 import { nextPairingState, getPairingState, setPairingState, markPairingCodeReceived, failPairing, pairingCodeForState } from "../lib/wa/pairing";
+import { parseJadwalScope } from "../lib/wa/executors/jadwal";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
 const MEM_DDL = [
@@ -106,6 +107,10 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     // pending-overlay: get() di dalam transaksi membaca pending map
     // (cabang nilai pending & cabang null=deleted)
     await store.set({ "lid-mapping:overlay": "628666" });
+    // T2a: seed dulu — tanpa seed, assert delete di bawah tautologis (baris
+    // DB kosong → undefined apa pun cabangnya); dengan seed, hanya cabang
+    // pending-delete yang bisa menghasilkan undefined.
+    await store.set({ "lid-mapping:overlayDel": "628999" });
     await store.transaction(async () => {
       await store.set({ "lid-mapping:overlay": "628777" }); // update → pending
       await store.set({ "lid-mapping:overlayDel": null });  // delete → pending (null)
@@ -131,6 +136,40 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     await drainTxn;
     const late = await slowStore.get("lid-mapping", ["late"]);
     assert(late["late"] === "628555", "set() selama commit transaksi tetap tersimpan (drain sisa ops)");
+
+    // I1 — reentrancy transaksi tumpang tindih (final-review):
+    // (a) T2 dimulai saat T1 masih dalam fase drain → ops T2 TIDAK hilang;
+    // (b) T2 selesai SETELAH T1 → finally T2 tidak boleh me-restore pending
+    // ke map yang sudah mati → set() berikutnya tetap di-commit.
+    const slowMemDb2 = await createSlowMemDb();
+    const slowStore2 = new WaSessionStore(slowMemDb2);
+    // (a) T2 mendarat di tengah drain T1 (macrotask boundary setImmediate)
+    const txnA = slowStore2.transaction(async () => {
+      await slowStore2.set({ "lid-mapping:r1a": "628a1" });
+      await slowStore2.set({ "lid-mapping:r1b": "628a2" });
+    });
+    let txnB!: Promise<unknown>;
+    setImmediate(() => {
+      txnB = slowStore2.transaction(async () => { await slowStore2.set({ "lid-mapping:r2": "628b" }); });
+    });
+    await txnA;
+    await txnB;
+    // (b) T2's fn menunggu macrotask → selesai setelah drain T1; set() di
+    // luar transaksi setelah keduanya → langsung commit (bukan map mati)
+    const txnC = slowStore2.transaction(async () => { await slowStore2.set({ "lid-mapping:r3": "628c" }); });
+    const txnD = slowStore2.transaction(async () => {
+      await new Promise((r) => setImmediate(r)); // melewati drain T1
+      await slowStore2.set({ "lid-mapping:r4": "628d" });
+    });
+    await Promise.all([txnC, txnD]);
+    await slowStore2.set({ "lid-mapping:r5": "628e" });
+    // verifikasi lewat instance BARU (pending = null → baca DB murni, bukan overlay)
+    const verifyStore = new WaSessionStore(slowMemDb2);
+    const afterOverlap = await verifyStore.get("lid-mapping", ["r1a", "r1b", "r2", "r3", "r4", "r5"]);
+    assert(afterOverlap["r1a"] === "628a1" && afterOverlap["r1b"] === "628a2" && afterOverlap["r2"] === "628b",
+      "I1: transaksi tumpang tindih (a) — ops T2 yang mendarat saat drain T1 tetap ter-commit");
+    assert(afterOverlap["r3"] === "628c" && afterOverlap["r4"] === "628d" && afterOverlap["r5"] === "628e",
+      "I1: transaksi tumpang tindih (b) — ops T2 tertunda + set() berikutnya tetap di-commit (tanpa stale pending map)");
 
     // tctoken namespace (objek dengan Buffer)
     const tctoken = { token: Buffer.from("tok"), timestamp: 1755000000000 };
@@ -225,20 +264,22 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
         end: () => {},
       };
     }
-    async function makeManager(opts: { onClose?: (p: any) => void }) {
+    async function makeManager(opts: { onClose?: (p: any) => void; captureTimers?: boolean }) {
       let callCount = 0;
       let authInvalid = false;
       const sockets: FakeSocket[] = [];
+      const timers: Array<() => void> = [];
       const manager = new WaClientManager({
         makeSocket: (() => { callCount++; const s = makeFakeSocket(); sockets.push(s); return s; }) as any,
         loadAuth: async () => ({ creds: { me: { id: "62812@lid" }, registered: false } as any, keys: {} as any }),
         persistCreds: async () => {},
         readAuthFlag: async () => authInvalid,
         persistAuthFlag: async (v) => { authInvalid = v; },
-        scheduleTimer: (fn) => { fn(); }, // fire langsung (deterministik untuk tes)
+        // fire langsung (deterministik) — kecuali captureTimers (I2: tahan timer backoff)
+        scheduleTimer: (fn) => { if (opts.captureTimers) timers.push(fn); else fn(); },
       });
       manager.on("close", opts.onClose ?? (() => {}));
-      return { manager, sockets, getCallCount: () => callCount };
+      return { manager, sockets, getCallCount: () => callCount, fireTimers: () => { while (timers.length) timers.shift()!(); } };
     }
     // Fixture realistis error lastDisconnect: Baileys rc14 SELALU memakai
     // @hapi/boom (Boom) — status hanya di err.output.statusCode. Plain object
@@ -253,6 +294,16 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(m1.getCallCount() === 1, "ensureWaClient 3× berurutan → tepat 1 socket (shared startup promise)");
     assert(m1.manager.state === "connecting", "ensureWaClient selesai → state connecting (socket belum open)");
 
+    // C1 (Critical): jendela connecting — startupPromise sudah di-clear tapi
+    // handshake Baileys masih berjalan → panggilan kedua TIDAK membuat socket
+    // kedua (dulu: dobel socket dgn creds sama → 440 replaced → stopFatal
+    // sampai re-pair manual)
+    const mC1 = await makeManager({});
+    assert((await mC1.manager.ensureWaClient()) === "connecting", "C1: ensureWaClient pertama → connecting");
+    assert(mC1.getCallCount() === 1, "C1: satu socket setelah ensure pertama");
+    assert((await mC1.manager.ensureWaClient()) === "connecting", "C1: panggilan kedua saat connecting → connecting");
+    assert(mC1.getCallCount() === 1, "C1: panggilan kedua saat connecting → tetap 1 socket (tanpa dobel)");
+
     // connect → open; temporary disconnect (408, Boom) → reconnect (backoff, 2 socket)
     const m2 = await makeManager({});
     await m2.manager.ensureWaClient();
@@ -262,6 +313,10 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     await new Promise((r) => setTimeout(r, 10));
     assert(m2.getCallCount() === 2, "disconnect temporary (408) → reconnect via backoff");
     assert(m2.manager.fatalReason === null, "temporary → fatalReason tetap null");
+    // C1 belt-and-braces: event dari socket generasi LAMA (sudah diganti)
+    // tidak boleh mencemari state manager
+    m2.sockets[0].handlers["connection.update"]({ connection: "open" });
+    assert(m2.manager.state !== "open", "C1: event open dari socket lama (sudah diganti) tidak mencemari state");
 
     // loggedOut (401, Boom) → stop + auth invalid; TANPA recreate
     const m3 = await makeManager({});
@@ -318,11 +373,58 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(m8.manager.state === "error" && m8.manager.fatalReason === "unavailable", "503 melewati 3 upaya → stop fatal unavailable");
     assert(m8.getCallCount() === 4, "503 melewati batas → TIDAK recreate lagi");
 
+    // I3: kuota 503 TERPISAH dari backoff 408/428 — interleaving tidak
+    // menguras kuota (dulu: 2×408 + 2×503 → 503 kedua sudah fatal)
+    const mI3 = await makeManager({});
+    await mI3.manager.ensureWaClient();
+    mI3.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(408, "Connection lost") } });
+    await new Promise((r) => setTimeout(r, 10));
+    mI3.sockets[1].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(408, "Connection lost") } });
+    await new Promise((r) => setTimeout(r, 10));
+    mI3.sockets[2].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    mI3.sockets[3].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(mI3.manager.fatalReason === null, "I3: 2×408 + 2×503 → masih retry (kuota 503 sendiri, tidak tercemar backoff)");
+    mI3.sockets[4].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(mI3.manager.fatalReason === null, "I3: 3× 503 (setelah 2×408) → masih retry (belum lewat kuota)");
+    mI3.sockets[5].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(mI3.manager.state === "error" && mI3.manager.fatalReason === "unavailable", "I3: 503 ke-4 → stop fatal unavailable (maks 3 upaya 503)");
+
+    // I3: kuota 503 di-reset saat open — koneksi pulih = kesempatan baru
+    const mI3b = await makeManager({});
+    await mI3b.manager.ensureWaClient();
+    mI3b.sockets[0].handlers["connection.update"]({ connection: "open" });
+    mI3b.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    mI3b.sockets[1].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    mI3b.sockets[2].handlers["connection.update"]({ connection: "open" }); // open → reset kuota 503
+    mI3b.sockets[2].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    mI3b.sockets[3].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(503, "Service unavailable") } });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(mI3b.manager.fatalReason === null, "I3: open me-reset kuota 503 (503 ke-3 setelah open tetap retry)");
+
     // waKeepAlive: open → healthy; dead → ensure (recovered)
     const m6 = await makeManager({});
     assert((await waKeepAlive(m6.manager)) === "connecting", "waKeepAlive saat belum ada socket → ensure → state");
     m6.sockets[0].handlers["connection.update"]({ connection: "open" });
     assert((await waKeepAlive(m6.manager)) === "healthy", "waKeepAlive saat open → healthy");
+
+    // I2: waKeepAlive saat reconnecting (timer backoff pending) → TANPA paksa
+    // initSocket — tick QStash tidak boleh mengalahkan delay backoff eksponensial
+    const mI2 = await makeManager({ captureTimers: true });
+    await mI2.manager.ensureWaClient();
+    mI2.sockets[0].handlers["connection.update"]({ connection: "close", lastDisconnect: { error: boomError(408, "Connection lost") } });
+    assert(mI2.manager.state === "reconnecting", "I2: 408 → state reconnecting (timer backoff pending)");
+    assert((await waKeepAlive(mI2.manager)) === "reconnecting", "I2: waKeepAlive saat reconnecting → reconnecting (tanpa initSocket paksa)");
+    assert(mI2.getCallCount() === 1, "I2: waKeepAlive saat reconnecting → TIDAK membuat socket baru");
+    mI2.fireTimers();
+    await new Promise((r) => setTimeout(r, 10));
+    assert(mI2.getCallCount() === 2, "I2: timer reconnect tetap jalan setelah waKeepAlive skip (backoff tidak dirusak)");
 
     // creds.update → persist + health lastAuthPersistence
     resetHealthForTests();
@@ -415,6 +517,11 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert((await resolveWhatsAppTarget({ jid: null, lid: "lidA", phone: "628111111111" })) === "lidA@lid", "lid → `${lid}@lid` (TANPA @s.whatsapp.net)");
     assert((await resolveWhatsAppTarget({ jid: null, lid: null, phone: "628111111111" })) === "628111111111@s.whatsapp.net", "hanya phone → fallback `${phone}@s.whatsapp.net`");
     assert((await resolveWhatsAppTarget({ jid: "lidA@lid", lid: "lidA", phone: "628111111111" })) === "lidA@lid", "jid LID tersimpan → apa adanya");
+    // T8m1: false-path isValidTransportJid — jid invalid (tanpa @ → jidDecode
+    // rc14 mengembalikan undefined) → fallback ke lid/phone. Catatan: contoh
+    // reviewer "foo@unknown.com" justru VALID (jidDecode = indexOf('@')).
+    assert((await resolveWhatsAppTarget({ jid: "foo", lid: "lidA", phone: "628111111111" })) === "lidA@lid", "jid invalid → fallback ke lid (false-path isValidTransportJid)");
+    assert((await resolveWhatsAppTarget({ jid: "foo", lid: null, phone: "628111111111" })) === "628111111111@s.whatsapp.net", "jid invalid + tanpa lid → fallback phone path");
   }
 
   // ===== F1 — commands parser (pure) =====
@@ -575,12 +682,90 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(strict.sent === false && strict.queued === false && svc.getQueueLength() === 0, "sendStrict gagal → tanpa antrean (hindari dobel dengan web push)");
   }
 
+  // ===== M1 — flushQueue health accounting (Task 5 SHOULD FIX) =====
+  {
+    resetHealthForTests();
+    // gagal: sendText throw → recordSendFailure per item → degraded
+    const failingManager = {
+      ready: false,
+      handlers: {} as Record<string, (p: any) => void>,
+      isReady() { return this.ready; },
+      async sendText() { throw new Error("kirim antrean gagal"); },
+      on(ev: string, cb: (p: any) => void) { this.handlers[ev] = cb; },
+    } as any;
+    const fsvc = new WaSendService(failingManager);
+    await fsvc.send("a@lid", "antri 1");
+    await fsvc.send("a@lid", "antri 2");
+    await fsvc.send("a@lid", "antri 3");
+    failingManager.ready = true;
+    failingManager.handlers["open"]({ isNewLogin: false });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(getHealthIndicators().failedSendAttempts === 3, "M1: flush gagal → recordSendFailure tiap item (3 beruntun)");
+    // anchor lastConnectionUpdate segar: cek degraded TIDAK tertutup possibly_silent
+    assert(computeHealth({ ...getHealthIndicators(), socketState: "open", lastConnectionUpdate: Date.now() }) === "degraded", "M1: flush gagal beruntun → health degraded (observability jujur)");
+    // sukses: flush sukses → recordSendSuccess + reset failedSendAttempts
+    const okManager = {
+      ready: false,
+      sent: [] as Array<{ jid: string; text: string }>,
+      handlers: {} as Record<string, (p: any) => void>,
+      isReady() { return this.ready; },
+      async sendText(jid: string, text: string) { this.sent.push({ jid, text }); return true; },
+      on(ev: string, cb: (p: any) => void) { this.handlers[ev] = cb; },
+    } as any;
+    const okSvc = new WaSendService(okManager);
+    await okSvc.send("a@lid", "ok 1");
+    await okSvc.send("a@lid", "ok 2");
+    okManager.ready = true;
+    okManager.handlers["open"]({ isNewLogin: false });
+    await new Promise((r) => setTimeout(r, 10));
+    assert(getHealthIndicators().lastSuccessfulSend !== null && getHealthIndicators().failedSendAttempts === 0, "M1: flush sukses → recordSendSuccess + reset counter");
+  }
+
   // ===== F1 — Notification decision (pure) =====
   {
     assert(decideDeliveryChannel(true, 0) === "whatsapp", "WA sukses → channel whatsapp");
     assert(decideDeliveryChannel(false, 2) === "web_push", "WA gagal + push sukses → fallback web_push");
     assert(decideDeliveryChannel(false, 0) === "none", "WA gagal + tanpa push → none");
-    assert(decideDeliveryChannel(true, 0) === "whatsapp", "WA sukses → TIDAK dobel kirim web push");
+    // T6m1: assert ke-4 dulu tautologis (duplikat persis arg (true, 0)) —
+    // sekarang (true, 5) membuktikan WA sukses menang walau push terkirim
+    assert(decideDeliveryChannel(true, 5) === "whatsapp", "WA sukses → TIDAK dobel kirim web push (push terkirim pun)");
+  }
+
+  // ===== I4 — blok WA sendReminder: throw → waSent false → fallback web push =====
+  {
+    const binding = { jid: null, lid: null, phone: "628111111111" };
+    // resolver throw (satu-satunya jalur throw realistis: dynamic import
+    // Baileys) → try/catch I4 → false, push fallback tetap jalan
+    const waOk = await trySendWaReminder(binding, "reminder", {
+      resolveTarget: async () => { throw new Error("import Baileys gagal"); },
+    });
+    assert(waOk === false, "I4: resolver throw → waSent=false (fallback web push tetap jalan)");
+    assert(decideDeliveryChannel(waOk, 2) === "web_push", "I4: resolver throw → channel web_push (fallback)");
+    // sendStrict throw juga dilindungi try/catch
+    assert((await trySendWaReminder(binding, "reminder", {
+      resolveTarget: async () => "628111111111@s.whatsapp.net",
+      sendStrict: async () => { throw new Error("socket gagal"); },
+    })) === false, "I4: sendStrict throw → false (fallback tetap)");
+    // tanpa target → false tanpa kirim
+    assert((await trySendWaReminder(binding, "reminder", { resolveTarget: async () => null })) === false, "I4: target null → false (tanpa kirim)");
+    // jalur sukses tidak terganggu
+    assert((await trySendWaReminder(binding, "reminder", {
+      resolveTarget: async () => "628111111111@s.whatsapp.net",
+      sendStrict: async () => ({ sent: true }),
+    })) === true, "I4: kirim sukses → true (tanpa regresi)");
+  }
+
+  // ===== T8m3 — parseJadwalScope pure (Task 8 SHOULD FIX) =====
+  {
+    const now = new Date("2026-08-13T10:00:00+07:00"); // Kamis 10:00 WIB
+    const besok = parseJadwalScope("besok", now);
+    assert(besok.scope === "besok" && besok.dayOfWeek === 5, "parseJadwalScope: besok → scope besok + Jumat (5)");
+    const minggu = parseJadwalScope("minggu ini", now);
+    assert(minggu.scope === "minggu_ini", "parseJadwalScope: 'minggu ini' → scope minggu_ini");
+    const perHari = parseJadwalScope("senin", now);
+    assert(perHari.scope === "hari" && perHari.dayOfWeek === 1, "parseJadwalScope: senin → scope hari + dayOfWeek 1");
+    const def = parseJadwalScope("", now);
+    assert(def.scope === "hari_ini" && def.dayOfWeek === 4, "parseJadwalScope: tanpa args → hari ini (Kamis, 4)");
   }
 
   // ===== F1 — Pairing state machine (pure, A7) =====

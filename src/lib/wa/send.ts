@@ -55,8 +55,15 @@ export class WaSendService {
     try {
       while (this.queue.length && this.manager.isReady()) {
         const item = this.queue.shift()!;
-        try { await this.manager.sendText(item.jid, item.text); }
-        catch (err) { logger.warn("wa: gagal kirim antrean", err); }
+        try {
+          await this.manager.sendText(item.jid, item.text);
+          // M1: health accounting jujur — flush ikut mencatat sukses (reset
+          // failedSendAttempts) / gagal (beruntun → health degraded).
+          health.recordSendSuccess();
+        } catch (err) {
+          logger.warn("wa: gagal kirim antrean", err);
+          health.recordSendFailure();
+        }
       }
     } finally { this.flushing = false; }
   }

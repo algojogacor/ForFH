@@ -103,6 +103,9 @@ export class WaClientManager {
   private authState: AuthenticationState | null = null;
   private startupPromise: Promise<void> | null = null;
   private backoffAttempt = 0;
+  /** I3: kuota upaya 503 — counter TERPISAH dari backoff eksponensial
+   *  408/428 agar deretan 408 tidak menguras kuota 503 (dan sebaliknya). */
+  private unavailableAttempts = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private listeners: Record<string, Array<(payload: any) => void | Promise<void>>> = {};
   private wiringDone = false;
@@ -160,6 +163,15 @@ export class WaClientManager {
   async ensureWaClient(): Promise<WaSocketState> {
     if (this.state === "open") return "open";
     if (this.fatalReason) return this.state;
+    // C1: jendela starting/connecting (handshake Baileys 1–20 detik di
+    // background) → return-early. Guard startupPromise TIDAK menutup jendela
+    // ini (di-clear begitu initSocket() resolve): panggilan kedua dalam
+    // jendela membuat socket DUA dengan creds sama → koneksi kedua
+    // menggantikan pertama → socket pertama menerima 440 replaced →
+    // stopFatal sampai re-pair manual. Aman untuk timer reconnect (fire saat
+    // state "reconnecting", bukan starting/connecting) dan resetFatal (state
+    // "stopped" — tidak di-block).
+    if (this.state === "starting" || this.state === "connecting") return this.state;
     if (this.startupPromise) { await this.startupPromise; return this.state; }
     this.startupPromise = this.initSocket().finally(() => { this.startupPromise = null; });
     await this.startupPromise;
@@ -216,9 +228,11 @@ export class WaClientManager {
       this.authState ??= await this.options.loadAuth();
       const sock = await this.options.makeSocket(this.authState);
       this.socket = sock;
-      sock.ev.on("connection.update", (update) => { void this.handleConnectionUpdate(update); });
+      // C1 belt-and-braces: handler membawa referensi sock — event dari socket
+      // generasi LAMA (sudah diganti) diabaikan di awal handler.
+      sock.ev.on("connection.update", (update) => { void this.handleConnectionUpdate(sock, update); });
       sock.ev.on("creds.update", (creds) => { void this.handleCredsUpdate(creds); });
-      sock.ev.on("messages.upsert", (upsert) => { void this.handleMessagesUpsert(upsert); });
+      sock.ev.on("messages.upsert", (upsert) => { void this.handleMessagesUpsert(sock, upsert); });
       this.state = "connecting";
       health.recordSocketState("connecting");
       this.ensureWiring();
@@ -238,10 +252,12 @@ export class WaClientManager {
     void import("./pairing").then((m) => m.registerPairingHooks(this)).catch((e) => logger.warn("wa: wiring pairing gagal", e));
   }
 
-  private async handleConnectionUpdate(update: any): Promise<void> {
+  private async handleConnectionUpdate(sock: WASocket, update: any): Promise<void> {
+    if (this.socket !== sock) return; // C1: event socket lama (sudah diganti) → abaikan
     if (update.connection === "open") {
       this.state = "open";
       this.backoffAttempt = 0;
+      this.unavailableAttempts = 0; // I3: kuota 503 juga di-reset saat open
       health.recordConnectionOpen(!!update.isNewLogin);
       if (update.isNewLogin) {
         await this.persistCredsNow();
@@ -282,8 +298,11 @@ export class WaClientManager {
         health.recordSocketState("reconnecting");
         this.scheduleReconnect(0);
         break;
-      case "unavailable": // 503: maks 3 upaya berurutan
-        if (this.backoffAttempt < 3) {
+      case "unavailable": // 503: maks 3 upaya berurutan — kuota TERPISAH dari
+        // backoff 408/428 (I3): deretan 408 tidak menguras kuota 503 dan
+        // sebaliknya; keduanya di-reset saat open.
+        if (this.unavailableAttempts < 3) {
+          this.unavailableAttempts += 1;
           this.state = "reconnecting";
           health.recordSocketState("reconnecting");
           this.scheduleReconnect(0);
@@ -348,7 +367,8 @@ export class WaClientManager {
     }
   }
 
-  private async handleMessagesUpsert(upsert: { messages: WAMessage[]; type: string }): Promise<void> {
+  private async handleMessagesUpsert(sock: WASocket, upsert: { messages: WAMessage[]; type: string }): Promise<void> {
+    if (this.socket !== sock) return; // C1: event socket lama (sudah diganti) → abaikan
     if (!upsert || upsert.type !== "notify" || !Array.isArray(upsert.messages)) return; // C1: hanya notify
     for (const msg of upsert.messages) {
       health.recordInboundMessage();
@@ -368,6 +388,10 @@ export class WaClientManager {
 export async function waKeepAlive(manager: WaClientManager): Promise<string> {
   if (await manager.isAuthInvalid()) return "auth-invalid"; // tanpa recreate
   if (manager.state === "open") return "healthy";
+  // I2: tick QStash yang mendarat saat timer backoff pending (state
+  // reconnecting) → biarkan timer bekerja; jangan paksa initSocket yang
+  // mengalahkan delay backoff eksponensial & menguras kuota 503.
+  if (manager.state === "reconnecting") return "reconnecting";
   const state = await manager.ensureWaClient();
   return state === "open" ? "recovered" : state;
 }
