@@ -16,7 +16,7 @@
 | **Scheduled Reminders** | ✅ PASS | Fail-closed Upstash QStash signature verification & delivery deduplication. |
 | **Offline Multi-User** | ✅ PASS | User-scoped IndexedDB instances (`forfh-user-${userId}-v2`) with logout pruning. |
 | **Campus Sync (Kampus Kita + HE-BAT)** | ✅ PASS | Login email kampus UNAIR → sync otomatis jadwal/kursus, KHS (nilai), tugas HE-BAT via iCal, rekap presensi + info kampus (8 jenis: pembayaran, dosen wali, masa studi, SKS, HER, KTM, kalender akademik), instruksi tugas HE-BAT (scrape section summary saat connect, campus_data jenis instruksi_tugas; PIH tanpa summary → kosong). Token terenkripsi at-rest (AES-256-GCM). Cron tick di `internal/reminders/process`. |
-| **WhatsApp Assistant (Baileys)** | ✅ PASS (dependency gate) | `@whiskeysockets/baileys@7.0.0-rc14` pin exact (≥ rc12 = patch CVE-2026-48063; versi < 7.0.0-rc12 / 6.7.22 ditolak). Import ESM — tidak ada CJS interop. 1 deployment = 1 instance = 1 socket. |
+| **WhatsApp Assistant (Baileys)** | ✅ PASS | Asisten WhatsApp (`@whiskeysockets/baileys@7.0.0-rc14`) PR #5 merged. Support pairing code, OTP, command pipeline, AI reply, send queue, dan notification routing. |
 
 ---
 
@@ -29,8 +29,9 @@
 - **Pasal.id Legal API & FRBR URI Tests**: 4 passed (URI normalization, leading slash stripping, whitespace trimming, standardized error messaging).
 - **Reminder Windows & Notification Deduplication Tests**: 7 passed (Indonesian date formatting, relative countdown overdue calculation, deduplication key uniqueness).
 - **Campus Sync Tests**: 75 passed (enkripsi at-rest roundtrip & mask email, parse iCal fixture nyata HE-BAT dengan folded line, pemetaan waktu/hari/grade point, iCal → tugas (UID → external_id, kode MK dari CATEGORIES), jadwal-kuliah KK → schedules, riwayat KHS → grades, presensi-kuliah KK → rekap per MK, instruksi tugas HE-BAT (parse halaman kursus → section summary + assignments, matching tugas → instruksi, graceful tanpa summary), daftar jenis campus_data).
+- **WhatsApp Assistant Tests**: 207 passed (SignalKeyStore Turso, reentrancy token guard, disconnect matrix, rate limits, identity resolver PN/LID, pairing state machine, fallback web push, send queue, health 5 level).
 
-**Total Results: 138 PASSED, 0 FAILED**
+**Total Results: 345 PASSED, 0 FAILED**
 
 ---
 
