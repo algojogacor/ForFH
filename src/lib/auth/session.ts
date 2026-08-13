@@ -10,6 +10,10 @@ export const SESSION_COOKIE_NAME =
 export const SESSION_DURATION_DAYS = 30;
 export const SESSION_DURATION_MS = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
 
+// Throttle write last_seen_at: maks 1×/menit per user (request path tidak
+// selalu nulis DB)
+const lastSeenThrottle = new Map<string, number>();
+
 export interface SessionUser {
   id: string;
   username: string;
@@ -79,11 +83,15 @@ export async function validateSession(rawToken: string | null | undefined): Prom
     return null;
   }
 
-  // Update last seen asynchronously
-  db.update(sessions)
-    .set({ lastSeenAt: now })
-    .where(eq(sessions.id, foundSession.id))
-    .catch((err) => logger.error("Error updating session lastSeenAt:", err));
+  // Update last seen asynchronously (throttled — maks 1×/menit per user)
+  const lastWrite = lastSeenThrottle.get(foundSession.userId) || 0;
+  if (Date.now() - lastWrite > 60_000) {
+    lastSeenThrottle.set(foundSession.userId, Date.now());
+    db.update(sessions)
+      .set({ lastSeenAt: now })
+      .where(eq(sessions.id, foundSession.id))
+      .catch((err) => logger.error("Error updating session lastSeenAt:", err));
+  }
 
   // Retrieve user and settings
   const user = await db.query.users.findFirst({

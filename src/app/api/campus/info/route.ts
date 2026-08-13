@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, campusAccounts, campusData } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { logger } from "@/lib/logger";
+import { memGet, memSet } from "@/lib/cache/mem-cache";
 
 // Data rekap & info kampus yang tersinkron (hanya baca). Semua jenis dikirim
 // sekaligus; UI menyaring per jenis. Baris data_json yang rusak dilewati —
@@ -12,6 +13,11 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ error: "Sesi tidak valid." }, { status: 401 });
   }
+
+  const cached = memGet<{ connected: boolean; lastSyncAt: Date | null; items: unknown[] }>(
+    `campus-info:${session.id}`
+  );
+  if (cached) return NextResponse.json(cached);
 
   const acc = await db.query.campusAccounts.findFirst({
     where: eq(campusAccounts.userId, session.id),
@@ -31,5 +37,7 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ connected: true, lastSyncAt: acc.lastSyncAt, items });
+  const payload = { connected: true, lastSyncAt: acc.lastSyncAt, items };
+  memSet(`campus-info:${session.id}`, payload, 60_000);
+  return NextResponse.json(payload);
 }

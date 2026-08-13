@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq, and, isNull } from "drizzle-orm";
 import { db, notes, courses } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
+import { memDel } from "@/lib/cache/mem-cache";
 
 export async function GET(
   req: NextRequest,
@@ -68,6 +69,7 @@ export async function PUT(
     })
     .where(and(eq(notes.id, noteId), eq(notes.userId, user.id)));
 
+  memDel(`notes-list:${user.id}`);
   return NextResponse.json({ success: true });
 }
 
@@ -87,5 +89,6 @@ export async function DELETE(
     .set({ deletedAt: new Date(), updatedAt: new Date() })
     .where(and(eq(notes.id, noteId), eq(notes.userId, user.id)));
 
+  memDel(`notes-list:${user.id}`);
   return NextResponse.json({ success: true });
 }

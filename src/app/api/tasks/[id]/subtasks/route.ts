@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { eq, and, isNull } from "drizzle-orm";
 import { db, tasks, subtasks } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
+import { memDel } from "@/lib/cache/mem-cache";
 
 export async function POST(
   req: NextRequest,
@@ -50,5 +51,6 @@ export async function POST(
     updatedAt: now,
   });
 
+  memDel(`tasks:${user.id}`);
   return NextResponse.json({ success: true, subtaskId });
 }

@@ -3,12 +3,16 @@ import crypto from "crypto";
 import { eq, and, desc, isNull } from "drizzle-orm";
 import { db, tasks, subtasks, courses } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
+import { memGet, memSet, memDel } from "@/lib/cache/mem-cache";
 
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const cached = memGet<{ tasks: unknown[] }>(`tasks:${user.id}`);
+  if (cached) return NextResponse.json(cached);
 
   const { searchParams } = new URL(req.url);
   const courseId = searchParams.get("courseId");
@@ -43,7 +47,9 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ tasks: processedTasks });
+  const payload = { tasks: processedTasks };
+  memSet(`tasks:${user.id}`, payload, 30_000);
+  return NextResponse.json(payload);
 }
 
 export async function POST(req: NextRequest) {
@@ -122,5 +128,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  memDel(`tasks:${user.id}`);
   return NextResponse.json({ success: true, taskId });
 }

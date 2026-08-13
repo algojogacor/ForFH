@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq, and, isNull } from "drizzle-orm";
 import { db, subtasks, tasks } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
+import { memDel } from "@/lib/cache/mem-cache";
 
 export async function PATCH(
   req: NextRequest,
@@ -64,6 +65,7 @@ export async function PATCH(
       .where(and(eq(tasks.id, existing.taskId), eq(tasks.userId, user.id)));
   }
 
+  memDel(`tasks:${user.id}`);
   return NextResponse.json({ success: true });
 }
 
@@ -83,5 +85,6 @@ export async function DELETE(
     .set({ deletedAt: new Date(), updatedAt: new Date() })
     .where(and(eq(subtasks.id, subtaskId), eq(subtasks.userId, user.id)));
 
+  memDel(`tasks:${user.id}`);
   return NextResponse.json({ success: true });
 }

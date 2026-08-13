@@ -35,7 +35,10 @@ export default function NotesPage() {
     setIsLoading(true);
     try {
       const [notesRes, coursesRes] = await Promise.all([
-        fetch("/api/notes").then((r) => r.json()),
+        // includeContent=true: list dipakai langsung sebagai sumber konten editor
+        // (pencarian isi, preview NoteCard, buka catatan) — halaman ini TIDAK
+        // fetch /api/notes/[id] untuk preview terpisah.
+        fetch("/api/notes?includeContent=true").then((r) => r.json()),
         fetch("/api/courses").then((r) => r.json()),
       ]);
       setNotes(notesRes.notes || []);

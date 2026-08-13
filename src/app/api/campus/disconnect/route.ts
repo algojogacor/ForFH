@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, campusAccounts } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
+import { memDel } from "@/lib/cache/mem-cache";
 
 // Putuskan koneksi kampus: hapus akun kampus (token terenkripsi ikut hilang).
 // Data yang sudah tersync (kursus, jadwal, tugas) tetap tersimpan; hanya
@@ -13,5 +14,7 @@ export async function POST() {
   }
 
   await db.delete(campusAccounts).where(eq(campusAccounts.userId, session.id));
+  memDel(`campus-info:${session.id}`);
+  memDel(`tasks:${session.id}`);
   return NextResponse.json({ success: true });
 }

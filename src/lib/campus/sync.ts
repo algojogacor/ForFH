@@ -28,6 +28,7 @@ import {
 } from "@/lib/db";
 import type { CampusDataJenis } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { memDel } from "@/lib/cache/mem-cache";
 import { mapLimit } from "@/lib/notifications/worker";
 import { decryptText, encryptText } from "@/lib/crypto/at-rest";
 import { sendPushToUser } from "@/lib/notifications/web-push";
@@ -390,6 +391,7 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
       syncStartedAt: null,
       updatedAt: new Date(),
     }).where(eq(campusAccounts.userId, userId));
+    memDel(`campus-info:${userId}`);
     await setSyncStep(userId, "selesai");
     return summary;
   } finally {
@@ -413,6 +415,7 @@ export async function markSyncError(userId: string, message: string): Promise<vo
     syncStartedAt: null,
     updatedAt: new Date(),
   }).where(eq(campusAccounts.userId, userId));
+  memDel(`campus-info:${userId}`);
 }
 
 // Export untuk reconnect HE-BAT: simpan authtoken baru

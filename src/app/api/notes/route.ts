@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { eq, and, desc, isNull } from "drizzle-orm";
 import { db, notes, courses } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
+import { memGet, memSet, memDel } from "@/lib/cache/mem-cache";
 
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
@@ -12,6 +13,14 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const courseId = searchParams.get("courseId");
+  const includeContent = searchParams.get("includeContent") === "true";
+
+  // Hanya list ringan (tanpa content) yang di-cache; pemanggil yang butuh
+  // konten penuh memakai ?includeContent=true dan selalu hit DB.
+  if (!includeContent) {
+    const cached = memGet<{ notes: unknown[] }>(`notes-list:${user.id}`);
+    if (cached) return NextResponse.json(cached);
+  }
 
   const allNotes = await db.query.notes.findMany({
     where: and(
@@ -25,7 +34,12 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ notes: allNotes });
+  const listNotes = includeContent
+    ? allNotes
+    : allNotes.map((n) => ({ ...n, content: undefined }));
+  const payload = { notes: listNotes };
+  if (!includeContent) memSet(`notes-list:${user.id}`, payload, 30_000);
+  return NextResponse.json(payload);
 }
 
 export async function POST(req: NextRequest) {
@@ -66,5 +80,6 @@ export async function POST(req: NextRequest) {
     updatedAt: now,
   });
 
+  memDel(`notes-list:${user.id}`);
   return NextResponse.json({ success: true, noteId });
 }
