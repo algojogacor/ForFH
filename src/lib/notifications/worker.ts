@@ -10,9 +10,13 @@ import {
   pushSubscriptions,
   aiUsage,
   appConfig,
+  waBindings,
 } from "../db";
 import { sendPushToUser } from "./web-push";
 import { logger } from "../logger";
+import { getWaSendService } from "../wa/send";
+import { resolveWhatsAppTarget } from "../wa/identity";
+import { formatKuliahReminder, formatTugasReminder } from "../wa/format";
 
 // Jalankan fn atas items dengan maksimal `limit` tugas bersamaan
 export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -44,6 +48,48 @@ export async function cleanupOldUsage(): Promise<void> {
   } catch (e: any) {
     logger.warn(`cleanupOldUsage: ${e?.message || e}`);
   }
+}
+
+/**
+ * Routing channel notifikasi (D1): binding WA active → WhatsApp;
+ * gagal → fallback web push. WA sukses → TIDAK dobel kirim push.
+ */
+export function decideDeliveryChannel(waSent: boolean, pushSent: number): "whatsapp" | "web_push" | "none" {
+  if (waSent) return "whatsapp";
+  if (pushSent > 0) return "web_push";
+  return "none";
+}
+
+export interface ReminderPayload {
+  push: { title: string; body: string; data: Record<string, string> };
+  waText: string;
+}
+
+export async function sendReminder(
+  userId: string,
+  payload: ReminderPayload
+): Promise<{ sentCount: number; channel: "whatsapp" | "web_push" | "none" }> {
+  const binding = await db.query.waBindings.findFirst({
+    where: and(eq(waBindings.userId, userId), eq(waBindings.status, "active")),
+  });
+
+  let waSent = false;
+  if (binding) {
+    const target = await resolveWhatsAppTarget(binding);
+    if (target) {
+      // sendStrict: tanpa queue — gagal lama/cepat sama-sama failure seketika
+      // (hindari pesan tertunda yang jadi dobel dengan fallback web push)
+      const res = await getWaSendService().sendStrict(target, payload.waText);
+      waSent = res.sent;
+    }
+  }
+
+  let pushSent = 0;
+  if (!waSent) {
+    const res = await sendPushToUser(userId, payload.push);
+    pushSent = res.sentCount;
+  }
+  return { sentCount: waSent ? 1 : pushSent, channel: decideDeliveryChannel(waSent, pushSent) };
 }
 
 /**
@@ -132,14 +178,14 @@ export async function processDueReminders(): Promise<{
               ? `Kuliah dimulai 4 jam lagi pukul ${item.startTime}${item.room ? ` di Ruang ${item.room}` : ""}. Siapkan materi Anda.`
               : `Kuliah dimulai dalam ${minutesUntilClass} menit (pukul ${item.startTime})${item.room ? ` di Ruang ${item.room}` : ""}.`;
 
-            const res = await sendPushToUser(userId, {
-              title,
-              body,
-              data: {
-                url: "/jadwal",
-                entityType: "class",
-                entityId: item.scheduleId,
+            const waText = formatKuliahReminder(item.courseName, item.room, item.startTime, minutesUntilClass, isPrimary);
+            const res = await sendReminder(userId, {
+              push: {
+                title,
+                body,
+                data: { url: "/jadwal", entityType: "class", entityId: item.scheduleId },
               },
+              waText,
             });
 
             if (res.sentCount > 0) {
@@ -151,7 +197,7 @@ export async function processDueReminders(): Promise<{
                 entityId: item.scheduleId,
                 occurrenceAt: new Date(occurrenceAt),
                 offsetMinutes: offset,
-                channel: "web_push",
+                channel: res.channel,
                 status: "SENT",
                 sentAt: new Date(),
               });
@@ -207,14 +253,14 @@ export async function processDueReminders(): Promise<{
             const title = `📝 Pengingat Tugas: ${task.title}`;
             const body = `Tenggat waktu ${offsetLabel} lagi. Segera periksa progres pengerjaan Anda.`;
 
-            const res = await sendPushToUser(userId, {
-              title,
-              body,
-              data: {
-                url: "/tugas",
-                entityType: "task",
-                entityId: task.id,
+            const waText = formatTugasReminder(task.title, offsetLabel);
+            const res = await sendReminder(userId, {
+              push: {
+                title,
+                body,
+                data: { url: "/tugas", entityType: "task", entityId: task.id },
               },
+              waText,
             });
 
             if (res.sentCount > 0) {
@@ -226,7 +272,7 @@ export async function processDueReminders(): Promise<{
                 entityId: task.id,
                 occurrenceAt: new Date(dueTimestamp),
                 offsetMinutes: offset,
-                channel: "web_push",
+                channel: res.channel,
                 status: "SENT",
                 sentAt: new Date(),
               });

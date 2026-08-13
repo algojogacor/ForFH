@@ -16,6 +16,7 @@ import { waRateLimitKey, allowAiReply, resetAiReplyForTests } from "../lib/wa/ra
 import { processIncomingMessage } from "../lib/wa/pipeline";
 import type { MessageDeps } from "../lib/wa/pipeline";
 import { WaSendService } from "../lib/wa/send";
+import { decideDeliveryChannel } from "../lib/notifications/worker";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
 const MEM_DDL = [
@@ -509,5 +510,13 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     fm.ready = false;
     const strict = await svc.sendStrict("a@lid", "reminder");
     assert(strict.sent === false && strict.queued === false && svc.getQueueLength() === 0, "sendStrict gagal → tanpa antrean (hindari dobel dengan web push)");
+  }
+
+  // ===== F1 — Notification decision (pure) =====
+  {
+    assert(decideDeliveryChannel(true, 0) === "whatsapp", "WA sukses → channel whatsapp");
+    assert(decideDeliveryChannel(false, 2) === "web_push", "WA gagal + push sukses → fallback web_push");
+    assert(decideDeliveryChannel(false, 0) === "none", "WA gagal + tanpa push → none");
+    assert(decideDeliveryChannel(true, 0) === "whatsapp", "WA sukses → TIDAK dobel kirim web push");
   }
 }
