@@ -37,6 +37,7 @@ Tanggal: 2026-08-13 · Branch: `feat/wa-assistant` · Status: **Produk disetujui
 - **Pin exact** di `package.json` (`"@whiskeysockets/baileys": "7.0.0-rc14"`, tanpa `^`/`~`) — build production/dev/CI dijamin versi sama.
 - **Tidak hardcode protocol version WhatsApp** di source code: pakai default `version` yang di-set Baileys 7; hanya override bila verifikasi startup menunjukkan `405` (pola upstream). Jangan menyimpan angka versi WA manual kecuali dokumentasi upstream mengharuskannya.
 - Acceptance: `npm ls @whiskeysockets/baileys` → satu baris rc14, tanpa transitive duplicate; versi dicatat di `docs/` (spec ini + BUILD_STATUS).
+- **ESM compatibility gate** (Baileys 7 beralih ke ESM): sebelum coding verifikasi `package.json` `type`, `tsconfig` `module`/`moduleResolution`, pola import Next.js (dynamic vs static), dan interop CJS/ESM terhadap pola import existing di repo. Acceptance: `npm run build` → import Baileys sukses di production build, **tanpa CJS/ESM interop error**, socket dapat dibuat pada Node runtime. DILARANG pola lama `require(...)`/`const { default: makeWASocket } = require(...)` sebagai default implementation — gunakan import ESM yang sesuai.
 - Konfigurasi socket yang dipakai (dari dokumentasi resmi): `auth` (wajib), `logger`, `markOnlineOnConnect: true`, `syncFullHistory: false`, `shouldIgnoreJid` (guard jid), `keepAliveIntervalMs` default 30_000, `connectTimeoutMs` default 20_000. Verifikasi ulang saat implementasi terhadap typings rc14.
 
 **Fakta API Baileys 7 yang diverifikasi dari dokumentasi resmi (dipakai seluruh spec ini):**
@@ -99,6 +100,7 @@ states: stopped | starting | connecting | open | reconnecting | closing | logged
 
 - `loggedOut` juga menghapus/tidak memakai lagi creds tersimpan (auth invalid flag di app_config `wa_auth_invalid`).
 - `connectionReplaced` tidak pernah auto-reconnect (infinite loop saat device diambil alih = bahaya).
+- **Klasifikasi diimplementasikan sebagai pure function `classifyDisconnect(statusCode)`** — mudah dites; callback socket hanya memanggil classifier, logika klasifikasi TIDAK ditanam di callback.
 
 ### A5. Keepalive (peran sebenarnya)
 
@@ -121,7 +123,15 @@ socketState | lastConnectionUpdate | lastMessageEvent | lastSendAttempt
 lastSuccessfulSend | lastSuccessfulReceive | lastAuthPersistence
 ```
 
-- Tujuan observability, bukan aggressive probing: jika `state == open` tetapi `lastMessageEvent` basi > 15 menit → status `healthy=false, reason:"silent"` di log/status UI.
+- Tujuan observability, **bukan aggressive probing — dan tanpa false alarm**: `lastMessageEvent` basi TIDAK berarti socket rusak (bot boleh saja tidak menerima pesan berjam-jam). Model status:
+
+```
+healthy | degraded | possibly_silent | disconnected | auth_invalid
+```
+
+- `possibly_silent` = state `open` + tidak ada inbound events (`lastMessageEvent`, `lastSuccessfulReceive`) > 15 menit — **bukan** `healthy=false`; UI menampilkan "Online · tidak ada pesan masuk sejak 22 menit" alih-alih "UNHEALTHY".
+- `degraded` = indikator lain bermasalah (mis. `lastSendAttempt` gagal berulang, `lastConnectionUpdate` basi).
+- Health = **fungsi gabungan indikator** (bukan satu pencatat waktu): `socketState | lastConnectionUpdate | lastMessageEvent | lastSendAttempt | lastSuccessfulSend | lastSuccessfulReceive | lastAuthPersistence`.
 - Catatan: connection "terlihat hidup" tetapi `messages.upsert` berhenti adalah insiden yang dilaporkan di 2026 — pencatatan inilah mitigasinya.
 
 ### A7. Pairing state machine
@@ -277,7 +287,7 @@ Pola konsisten semua balasan — header emoji + bold, divider, baris rapi:
 3 kelas · ketik !jadwal besok utk besok
 ```
 
-- ≤ ~3500 char (batas WA); lebih → ringkas + "…ketik !x utk lengkap".
+- ≤ ~3500 char (application UX/safety limit — keputusan aplikasi, bukan hard limit WhatsApp); lebih → ringkas + "…ketik !x utk lengkap".
 - Waktu lokal **Asia/Jakarta** (pola daily-insight).
 - `!tugas` menyertakan status ✅/⏳ + tenggat; `!nilai` per MK.
 
@@ -301,13 +311,13 @@ Ganti pemanggil `sendPushToUser` (blok class & task) dengan `sendReminder(userId
 
 ### D2. `resolveWhatsAppTarget(binding)` — `src/lib/wa/identity.ts`
 
-Pilih identity outbound valid (BUKAN asumsi `${phone}@s.whatsapp.net` selalu):
+Pilih identity outbound valid. **Prinsip: prefer LID sebagai transport identity — jangan pernah otomatis mengembalikan LID → PN hanya karena PN tersedia, dan JANGAN PERNAH membuat `${lid}@s.whatsapp.net`** (`@lid` dan `@s.whatsapp.net` adalah dua identity berbeda; upstream mendorong migrasi aplikasi ke LID, bukan memaksa LID kembali ke PN).
 
-1. `binding.jid` (transport jid tersimpan — PN atau LID, dipakai bila valid).
-2. `binding.lid` → lid JID (`<lid>@s.whatsapp.net` bila diterima Baileys 7 — verifikasi saat implementasi; alternatif: `getPNForLID(lid)` → PN jid).
-3. Fallback: `${phone}@s.whatsapp.net` (verification identifier).
+1. `binding.jid` valid → gunakan apa adanya (transport jid tersimpan — PN atau LID).
+2. `binding.lid` tersedia → target LID: `${lid}@lid`, atau API internal Baileys yang sesuai bila diperlukan untuk menghasilkan target LID valid (migration guide: `sock.signalRepository.lidMapping` — `getLIDForPN`, `getPNForLID`, `storeLIDPNMappings`).
+3. Hanya `phone` tersedia → `${phone}@s.whatsapp.net` sebagai **fallback** untuk binding yang belum memiliki transport identity.
 
-`phone` TETAP dipertahankan sebagai verification/UI identity.
+`phone` TETAP dipertahankan sebagai verification/UI identity; application layer hanya menjawab *ForFH user ↔ WhatsApp target* — bukan implementasi kedua dari LID protocol.
 
 ### D3. Format notif WA
 
@@ -358,10 +368,16 @@ Hukum Pidana · Ruang A-203 · 08:00
 - `ensureWaClient()` idempoten: 3× panggilan berurutan + panggilan saat `starting`/`connecting` → tepat 1 socket (shared startup promise)
 - connect → open; disconnect temporary → reconnect (backoff); loggedOut → stop, auth invalid; connectionReplaced → stop, tidak reconnect; restartRequired → recreate
 - `waKeepAlive()`: open → healthy; dead → ensure; auth-invalid → auth-invalid (tanpa recreate)
+- `classifyDisconnect(statusCode)` pure: semua nilai enum → klasifikasi benar (temporary/restart/loggedOut/replaced/badSession/mismatch/forbidden/unavailable/unknown)
 
 **Identity resolver** (pure):
 
 - PN identity → userId; LID identity → userId (via mapping); alternate identity; unknown → null; mapping refresh; restart preserves mapping (keystore round-trip)
+- `resolveWhatsAppTarget(binding)`: jid prioritas dipakai apa adanya; lid → `${lid}@lid` (TANPA `${lid}@s.whatsapp.net`); hanya phone → `${phone}@s.whatsapp.net` fallback
+
+**Health model** (pure):
+
+- state `open` + lastMessageEvent basi > 15 menit → `possibly_silent`, BUKAN unhealthy; indikator lain gagal → `degraded`; kombinasi indikator → health yang tepat
 
 **Messaging** (pure, event mock):
 
