@@ -31,6 +31,10 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
   // Dinaikkan saat retry: efek polling berhenti sendiri saat status idle/error,
   // jadi retry harus menjalankan ulang efek supaya kartu mengikuti sync baru.
   const [pollRestart, setPollRestart] = useState(0);
+  // Timestamp retry terakhir yang sukses: grace window agar polling tidak mati
+  // di tengah race claim sync (POST fire-and-forget selesai sebelum syncState
+  // ditulis jadi "running" oleh background sync).
+  const retryAtRef = useRef(0);
 
   // Polling 2 detik: terus berjalan selama masih "running", berhenti sendiri
   // saat idle dan tidak ada transisi selesai yang perlu ditampilkan.
@@ -55,6 +59,12 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
                    Date.now() - new Date(data.lastSyncAt).getTime() < 60_000) {
           setPolling(true); // transisi "baru selesai" — poll sebentar lagi, lalu berhenti
           timer = setTimeout(tick, 2000);
+        } else if (Date.now() - retryAtRef.current < 10_000) {
+          // Retry baru sukses: claim sync butuh 1-2 round trip Turso, jadi
+          // syncState masih bisa terbaca "idle" pada tick pertama — tahan
+          // polling beberapa tick lagi, lalu berhenti sendiri (bounded).
+          setPolling(true);
+          timer = setTimeout(tick, 2000);
         } else {
           setPolling(false);
         }
@@ -71,14 +81,19 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
   }, [pollRestart]);
 
   const handleRetry = async () => {
+    let ok = false;
     try {
-      await fetch("/api/campus/sync", { method: "POST" });
+      const res = await fetch("/api/campus/sync", { method: "POST" });
+      ok = res.ok;
       invalidateClientCache();
-      // Efek polling berhenti saat status error — nyalakan ulang supaya kartu
-      // mengikuti sync baru (fetch pertama langsung jalan, bukan nunggu 2 detik).
-      setPollRestart((n) => n + 1);
     } catch { /* dibiarkan */ }
-    setStatus({ connected: true, state: "running", step: "mulai" });
+    // Efek polling berhenti saat status error — nyalakan ulang supaya kartu
+    // mengikuti sync baru (fetch pertama langsung jalan, bukan nunggu 2 detik).
+    // Gagal: polling tetap dihidupkan ulang agar kartu terus memantau status
+    // endpoint, tanpa status optimis yang menyesatkan.
+    if (ok) retryAtRef.current = Date.now();
+    setPollRestart((n) => n + 1);
+    if (ok) setStatus({ connected: true, state: "running", step: "mulai" });
   };
 
   if (!status?.connected) return null;
