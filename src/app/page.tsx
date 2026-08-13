@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import { eq, and, isNull, asc, desc } from "drizzle-orm";
 import { getSessionUser } from "@/lib/auth/session";
-import { db, classSchedules, courses, tasks, exams } from "@/lib/db";
+import { db, campusAccounts, classSchedules, courses, tasks, exams } from "@/lib/db";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { DashboardClientView } from "@/components/dashboard/DashboardClientView";
+import { SyncProgressCard } from "@/components/campus/SyncProgressCard";
 import { formatDateIndonesian } from "@/lib/utils";
 
 export default async function DashboardPage() {
@@ -131,9 +132,15 @@ export default async function DashboardPage() {
     dateString: formatDateIndonesian(now, false),
   };
 
+  // 5. Koneksi akun kampus (gate untuk SyncProgressCard)
+  const campusAcc = await db.query.campusAccounts.findFirst({
+    where: eq(campusAccounts.userId, user.id),
+  });
+
   return (
     <AppShell user={user}>
       <PageContainer variant="wide">
+        {campusAcc ? <SyncProgressCard className="mb-4" /> : null}
         <DashboardClientView initialData={dashboardData} />
       </PageContainer>
     </AppShell>

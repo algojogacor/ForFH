@@ -6,6 +6,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { PageContainer, PageHeader } from "@/components/ui/PageContainer";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
+import { SyncProgressCard } from "@/components/campus/SyncProgressCard";
 
 export default function SettingsPage() {
   const { toast, success } = useToast();
@@ -37,10 +38,10 @@ export default function SettingsPage() {
     setIsSyncing(true);
     try {
       const res = await fetch("/api/campus/sync", { method: "POST" });
-      const data = await res.json();
       if (res.ok) {
-        success(`Sinkronisasi selesai: ${data.summary.tasks} tugas, ${data.summary.schedules} jadwal, ${data.summary.grades} nilai, ${data.summary.campusData} info.`);
+        success("Sinkronisasi dimulai di latar belakang — pantau progress di atas.");
       } else {
+        const data = await res.json().catch(() => ({}));
         toast(data.error || "Sinkronisasi gagal.");
       }
     } catch {
@@ -186,6 +187,7 @@ export default function SettingsPage() {
         />
 
         {/* Sinkronisasi Kampus */}
+        <SyncProgressCard className="mb-4" />
         <Card className="border-border-default">
           <CardHeader className="py-2.5 px-3.5 border-b border-border-default">
             <CardTitle className="flex items-center gap-2 text-sm">
