@@ -45,6 +45,9 @@ export const campusAccounts = sqliteTable(
     lastSyncStatus: text("last_sync_status").notNull().default("never"), // never | ok | error
     lastSyncSummary: text("last_sync_summary"),
     lastSyncError: text("last_sync_error"),
+    syncState: text("sync_state").notNull().default("idle"), // idle | running
+    syncStep: text("sync_step"), // label langkah aktif (mulai, jadwal, kursus, tugas, nilai, info, selesai)
+    syncStartedAt: integer("sync_started_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(strftime('%s', 'now') * 1000)`),
@@ -640,6 +643,26 @@ export const aiUsage = sqliteTable(
     createdAtIdx: index("ai_usage_created_at_idx").on(table.createdAt),
     providerIdx: index("ai_usage_provider_idx").on(table.provider),
     accountSlotIdx: index("ai_usage_account_slot_idx").on(table.accountSlot),
+  })
+);
+
+export const aiCache = sqliteTable(
+  "ai_cache",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    jenis: text("jenis").notNull(), // daily_insight | explain_law
+    cacheKey: text("cache_key").notNull(),
+    resultJson: text("result_json").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(strftime('%s', 'now') * 1000)`),
+  },
+  (table) => ({
+    userJenisKeyIdx: uniqueIndex("ai_cache_user_jenis_key_idx").on(table.userId, table.jenis, table.cacheKey),
   })
 );
 

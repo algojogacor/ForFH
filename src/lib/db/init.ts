@@ -33,6 +33,9 @@ export async function initializeDatabaseSchema() {
       last_sync_status TEXT NOT NULL DEFAULT 'never',
       last_sync_summary TEXT,
       last_sync_error TEXT,
+      sync_state TEXT NOT NULL DEFAULT 'idle',
+      sync_step TEXT,
+      sync_started_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
       updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
     );`,
@@ -359,6 +362,17 @@ export async function initializeDatabaseSchema() {
     `CREATE INDEX IF NOT EXISTS ai_usage_provider_idx ON ai_usage(provider);`,
     `CREATE INDEX IF NOT EXISTS ai_usage_account_slot_idx ON ai_usage(account_slot);`,
 
+    `CREATE TABLE IF NOT EXISTS ai_cache (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      jenis TEXT NOT NULL,
+      cache_key TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    );`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS ai_cache_user_jenis_key_idx ON ai_cache(user_id, jenis, cache_key);`,
+
     `CREATE TABLE IF NOT EXISTS auth_rate_limits (
       key_hash TEXT PRIMARY KEY,
       window_start INTEGER NOT NULL,
@@ -375,5 +389,26 @@ export async function initializeDatabaseSchema() {
 
   for (const sqlQuery of ddlStatements) {
     await rawClient.execute(sqlQuery);
+  }
+
+  // Kolom progress sync (migrasi 0003) — guard untuk database yang tabel
+  // campus_accounts-nya sudah ada (SQLite tidak mendukung ADD COLUMN IF NOT EXISTS,
+  // jadi cek PRAGMA table_info dulu).
+  const campusAccountCols = await rawClient.execute("PRAGMA table_info(campus_accounts);");
+  const campusAccountColNames = new Set(
+    campusAccountCols.rows.map((row) => String(row.name))
+  );
+  const campusAccountAlters: string[] = [];
+  if (!campusAccountColNames.has("sync_state")) {
+    campusAccountAlters.push(`ALTER TABLE campus_accounts ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'idle';`);
+  }
+  if (!campusAccountColNames.has("sync_step")) {
+    campusAccountAlters.push(`ALTER TABLE campus_accounts ADD COLUMN sync_step TEXT;`);
+  }
+  if (!campusAccountColNames.has("sync_started_at")) {
+    campusAccountAlters.push(`ALTER TABLE campus_accounts ADD COLUMN sync_started_at INTEGER;`);
+  }
+  for (const alterQuery of campusAccountAlters) {
+    await rawClient.execute(alterQuery);
   }
 }
