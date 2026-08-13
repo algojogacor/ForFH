@@ -104,8 +104,10 @@ export class WaSessionStore implements SignalKeyStore {
     if (!entries.length) return;
     // Encode di kedua jalur (pending & langsung): tanpa prefix encode,
     // decodeValue salah menafsirkan string (JSON.parse angka) dan objek
-    // (tctoken) tidak bisa dienkripsi.
-    const ops = entries.map(([k, v]) => [k, v === null ? null : encodeValue(v)] as [string, string | null]);
+    // (tctoken) tidak bisa dienkripsi. undefined ≈ tidak ada (guard total —
+    // encodeValue(undefined) menghasilkan "j:undefined" yang gagal decode);
+    // null = DELETE (semantik Baileys).
+    const ops = entries.map(([k, v]) => [k, v === undefined || v === null ? null : encodeValue(v)] as [string, string | null]);
     if (this.pending) {
       for (const [k, v] of ops) this.pending.set(k, v);
       return;
@@ -121,7 +123,19 @@ export class WaSessionStore implements SignalKeyStore {
     this.pending = outer ?? new Map();
     try {
       const result = await fn(this);
-      if (!outer) await this.applyOps([...this.pending.entries()]);
+      // Commit berurutan. set() yang mendarat SELAMA commit (mis. event pesan
+      // WA; round-trip Turso 10-100ms) menumpuk di pending — drain sampai
+      // habis agar tidak hilang diam-diam. Snapshot + clear per iterasi:
+      // tanpa clear, iterasi meng-commit ulang entry yang sama tanpa henti;
+      // ops yang mendarat selama applyOps tetap di pending dan disapu
+      // iterasi berikutnya (loop berhenti saat tidak ada ops baru).
+      if (!outer) {
+        while (this.pending.size) {
+          const snapshot = [...this.pending.entries()];
+          this.pending.clear();
+          await this.applyOps(snapshot);
+        }
+      }
       return result;
     } finally {
       this.pending = outer;
