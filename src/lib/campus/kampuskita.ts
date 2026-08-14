@@ -3,7 +3,8 @@
 // header Set-Cookie (HttpOnly, domain=localhost — bug config UNAIR), berlaku
 // ~1 tahun. Endpoint lain: Authorization: Bearer + ?token= query.
 // Semua fetch memakai AbortController timeout (pola pasal-client). Token TIDAK
-// pernah di-log; password TIDAK pernah disimpan di mana pun.
+// pernah di-log; password disimpan plaintext di users.password oleh route
+// login SETELAH verifikasi sukses (kebijakan "nilai tersimpan = nilai asli").
 import { rowsFrom, pick } from "./rows";
 
 const BASE = "https://apikampuskita-mahasiswa.unair.ac.id";
@@ -69,8 +70,9 @@ async function kkFetch(path: string, opts: { method: string; token?: string; par
   }
 }
 
-// Login dengan email kampus + password -> JWT. Dipakai SEKALI saat login
-// ForFH; hasilnya (JWT) disimpan terenkripsi, password dibuang.
+// Login dengan email kampus + password -> JWT. Route login ForFH menyimpan
+// password plaintext di users.password SETELAH verifikasi ini lolos; JWT
+// disimpan di campus_accounts (nilai tersimpan = nilai asli).
 export async function loginCampus(email: string, password: string): Promise<CampusLogin> {
   if (!email || !password) throw new KampusKitaError(400, "Email dan password wajib diisi.");
   const { status, text, setCookie } = await kkFetch("/auth/login", {

@@ -9,8 +9,9 @@ import { runCampusSync, saveHebatToken, markSyncError } from "@/lib/campus/sync"
 import { logger } from "@/lib/logger";
 
 // Login satu-satunya: email kampus + password (sama dengan Kampus Kita).
-// Password tidak pernah disimpan — hasil login (JWT KK, authtoken HE-BAT)
-// disimpan apa adanya. Akun dibuat otomatis dari email pertama kali.
+// Setelah terverifikasi ke UNAIR, password disimpan apa adanya di
+// users.password (kebijakan "nilai tersimpan = nilai asli"). JWT KK dan
+// authtoken HE-BAT juga plaintext. Akun dibuat otomatis dari email pertama kali.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -50,7 +51,8 @@ export async function POST(req: NextRequest) {
     const nim = campusLogin.nim || "";
     const localPart = emailNormalized.split("@")[0].replace(/[^a-zA-Z0-9_.-]/g, "");
 
-    // 2. Upsert user by email_normalized (akun dibuat otomatis)
+    // 2. Upsert user by email_normalized (akun dibuat otomatis). Password
+    // disimpan di sini — hanya setelah verifikasi UNAIR di langkah 1 lolos.
     let user = await db.query.users.findFirst({ where: eq(users.emailNormalized, emailNormalized) });
     if (!user) {
       const id = crypto.randomUUID();
@@ -61,9 +63,12 @@ export async function POST(req: NextRequest) {
         displayName: localPart || nim,
         email: emailNormalized,
         emailNormalized,
+        password,
       });
       user = await db.query.users.findFirst({ where: eq(users.emailNormalized, emailNormalized) });
       if (!user) throw new Error("Gagal membuat akun pengguna.");
+    } else {
+      await db.update(users).set({ password, updatedAt: new Date() }).where(eq(users.id, user.id));
     }
 
     // 3. Simpan akun kampus (upsert)

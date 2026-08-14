@@ -10,7 +10,7 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     username: text("username").notNull(),
     usernameNormalized: text("username_normalized").notNull().unique(),
-    password: text("password"), // nullable: login lewat verifikasi Kampus Kita, bukan password lokal
+    password: text("password"), // diisi setelah verifikasi Kampus Kita sukses (plaintext, apa adanya)
     displayName: text("display_name"),
     email: text("email"),
     emailNormalized: text("email_normalized"),
@@ -28,9 +28,9 @@ export const users = sqliteTable(
 );
 
 // Akun kampus terhubung (Kampus Kita + HE-BAT) — token disimpan apa adanya
-// (nilai tersimpan = nilai asli), password asli TIDAK PERNAH disimpan.
-// jwt = JWT Kampus Kita (~1 tahun), hebat_authtoken = kunci kalender HE-BAT
-// (tanpa sesi). Lihat src/lib/campus.
+// (nilai tersimpan = nilai asli). Password kampus disimpan di users.password
+// (setelah verifikasi); jwt = JWT Kampus Kita (~1 tahun), hebat_authtoken =
+// kunci kalender HE-BAT (tanpa sesi). Lihat src/lib/campus.
 export const campusAccounts = sqliteTable(
   "campus_accounts",
   {

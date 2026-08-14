@@ -9,7 +9,8 @@ import { logger } from "@/lib/logger";
 
 // Hubungkan ulang HE-BAT dengan password terpisah (kalau beda dari password
 // Kampus Kita). Dipakai sekali saat connect — authtoken hasilnya disimpan
-// terenkripsi; password tidak pernah disimpan.
+// apa adanya; password dari jalur ini tidak disimpan (hanya jalur login
+// kampus yang menyimpan password, ke users.password setelah verifikasi).
 export async function POST(req: NextRequest) {
   const session = await getSessionUser();
   if (!session) {

@@ -6,8 +6,10 @@ ForFH V4 mengganti login username/password internal dengan **login email kampus*
 (`@student.unair.ac.id` + password), diverifikasi ke server Kampus Kita UNAIR
 (`apikampuskita-mahasiswa.unair.ac.id`). Prinsip keamanan:
 
-- **Password tidak pernah disimpan** — hanya hasil login yang disimpan: JWT Kampus
-  Kita dan authtoken kalender HE-BAT (Moodle UNAIR).
+- **Password disimpan setelah verifikasi** — password kampus disimpan plaintext di
+  `users.password` oleh route login, HANYA setelah verifikasi ke UNAIR sukses
+  (kebijakan app pribadi: nilai tersimpan = nilai asli). JWT Kampus Kita dan
+  authtoken kalender HE-BAT (Moodle UNAIR) juga disimpan apa adanya.
 - **Nilai tersimpan = nilai asli (tanpa enkripsi at-rest)** — token disimpan apa
   adanya di `campus_accounts` (`jwt`, `hebat_authtoken`). Keputusan app pribadi:
   tidak ada transformasi antara nilai asli dan isi DB. Data lama berformat `v1:`
@@ -35,10 +37,11 @@ ForFH V4 mengganti login username/password internal dengan **login email kampus*
 ## 1. Authentication & Credential Storage
 
 ### 1.1 Password Handling
-- **Password tidak pernah disimpan** — login hanya memverifikasi email + password
-  ke Kampus Kita UNAIR (server UNAIR yang memeriksa). Kolom `users.password`
-  nullable tidak terpakai (scrypt/hashing/pepper dihapus 2026-08 — app pribadi,
-  tanpa transformasi nilai antara asli dan penyimpanan).
+- **Password disimpan setelah verifikasi** — login hanya memverifikasi email +
+  password ke Kampus Kita UNAIR (server UNAIR yang memeriksa). Jika lolos, route
+  login menyimpan password plaintext di `users.password` (kebijakan app pribadi:
+  nilai tersimpan = nilai asli, tanpa transformasi; scrypt/hashing/pepper dihapus
+  2026-08). Jalur HE-BAT (`/api/campus/hebat`) TIDAK menyimpan password.
 
 ### 1.2 Session Security
 - **Session Tokens**: 32 random bytes (64 hex characters) generating 256 bits of entropy.

@@ -12,7 +12,7 @@
 | :--- | :--- | :--- |
 | **Framework** | Next.js 15.1.7 (App Router), React 19, TypeScript 5.7 | Next.js 15 on Vercel Serverless |
 | **Database** | LibSQL / Turso via `@libsql/client` & `drizzle-orm` | Hosted Turso DB with Drizzle Migrations |
-| **Authentication** | High-entropy session tokens disimpan RAW di DB (nilai asli = nilai tersimpan, tanpa hashing), login hanya via verifikasi Kampus Kita (password tidak pernah disimpan), HttpOnly cookies | Hardened session isolation, tanpa secret tambahan (SESSION_SECRET/PASSWORD_PEPPER dihapus 2026-08) |
+| **Authentication** | High-entropy session tokens disimpan RAW di DB (nilai asli = nilai tersimpan, tanpa hashing), login hanya via verifikasi Kampus Kita (password disimpan plaintext di users.password SETELAH verifikasi sukses), HttpOnly cookies | Hardened session isolation, tanpa secret tambahan (SESSION_SECRET/PASSWORD_PEPPER dihapus 2026-08) |
 | **AI Routing** | Groq (`openai/gpt-oss-120b`, 2 key slots) &rarr; Ollama Cloud (`gpt-oss:120b-cloud`, 2 key slots) &rarr; MiniMax M3 Cloud fallback | Strict Zod validation, single-attempt JSON repair guard, circuit breaker cooldown, graceful app degradation |
 | **Google Drive** | Centralized Google Drive (OAuth2 refresh token) with per-user folder hierarchy | Resumable direct upload, server-side Drive API verification, strict quota and user isolation |
 | **Legal Engine** | Pasal.id REST API (`/search`, `/laws/{frbr_uri}`) | Fail-closed in production, zero mock fallback in prod, Indonesian error messaging |
