@@ -213,6 +213,8 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
       { jenis: "hist_her", fetch: () => client.histHer() },
       { jenis: "penyerahan_ktm", fetch: () => client.penyerahanKtm() },
       { jenis: "kalender_akademik", fetch: () => client.kalenderAkademik() },
+      { jenis: "status_mhs", fetch: () => client.status() },
+      { jenis: "peserta_mk", fetch: () => client.pesertaMataKuliah() },
     ];
 
     // --- fetch paralel ---------------------------------------------------------

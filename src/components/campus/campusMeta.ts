@@ -2,6 +2,7 @@
 // yang diimpor dari server (type-only, hilang saat kompilasi).
 import type { LucideIcon } from "lucide-react";
 import {
+  BadgeCheck,
   CalendarDays,
   ClipboardCheck,
   CreditCard,
@@ -10,6 +11,7 @@ import {
   IdCard,
   Layers,
   UserRound,
+  Users,
 } from "lucide-react";
 import type { CampusDataJenis } from "@/lib/db";
 
@@ -23,10 +25,12 @@ export interface CampusJenisMeta {
 // Urutan tampilan di halaman Info Kampus
 export const CAMPUS_JENIS_META: CampusJenisMeta[] = [
   { jenis: "presensi", title: "Rekap Kehadiran", description: "Agregat kehadiran per mata kuliah dari Kampus Kita.", icon: ClipboardCheck },
+  { jenis: "status_mhs", title: "Status Mahasiswa", description: "Data diri dan status akademik dari Kampus Kita.", icon: BadgeCheck },
   { jenis: "kalender_akademik", title: "Kalender Akademik", description: "Tanggal penting semester berjalan.", icon: CalendarDays },
   { jenis: "dosen_wali", title: "Dosen Wali", description: "Dosen wali semester berjalan.", icon: UserRound },
   { jenis: "masa_studi", title: "Masa Studi", description: "Masa studi dan sisa waktu tempuh.", icon: Hourglass },
   { jenis: "sks_aktif", title: "SKS Aktif", description: "Beban SKS semester berjalan.", icon: Layers },
+  { jenis: "peserta_mk", title: "Peserta Mata Kuliah", description: "Mata kuliah yang kamu ikuti beserta kelasnya.", icon: Users },
   { jenis: "hist_her", title: "Riwayat HER", description: "Nilai perbaikan (HER) yang pernah diambil.", icon: History },
   { jenis: "penyerahan_ktm", title: "Penyerahan KTM", description: "Riwayat pengambilan kartu mahasiswa.", icon: IdCard },
   { jenis: "pembayaran", title: "Pembayaran", description: "Riwayat tagihan dan pembayaran.", icon: CreditCard },
@@ -63,6 +67,10 @@ export const CAMPUS_FIELD_LABELS: Record<string, string> = {
   PRODI: "Prodi",
   JENJANG: "Jenjang",
   FAKULTAS: "Fakultas",
+  ANGKATAN: "Angkatan",
+  STATUS_AKADEMIK: "Status Akademik",
+  JK: "Jenis Kelamin",
+  AGAMA: "Agama",
   JUM_MK: "Jumlah MK",
   SKS_TEMPUH: "SKS Tempuh",
   TANGGAL: "Tanggal",

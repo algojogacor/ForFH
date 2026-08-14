@@ -446,8 +446,9 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
   assert(instructionCounted("instruksi", undefined) === true, "tugas baru (tanpa existing) + instr ada -> dihitung");
 
   console.log("  ── Campus sync (jenis campus_data) ──");
-  assert(CAMPUS_DATA_JENIS.length === 9, "9 jenis data kampus terdaftar");
-  assert(new Set(CAMPUS_DATA_JENIS).size === 9, "jenis tidak duplikat");
+  assert(CAMPUS_DATA_JENIS.length === 11, "11 jenis data kampus terdaftar");
+  assert(new Set(CAMPUS_DATA_JENIS).size === 11, "jenis tidak duplikat");
   assert(CAMPUS_DATA_JENIS.includes("presensi") && CAMPUS_DATA_JENIS.includes("pembayaran"), "presensi + pembayaran terdaftar");
   assert(CAMPUS_DATA_JENIS.includes("instruksi_tugas"), "instruksi_tugas terdaftar");
+  assert(CAMPUS_DATA_JENIS.includes("status_mhs") && CAMPUS_DATA_JENIS.includes("peserta_mk"), "status_mhs + peserta_mk terdaftar");
 }

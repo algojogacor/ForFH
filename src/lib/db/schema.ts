@@ -484,6 +484,8 @@ export const CAMPUS_DATA_JENIS = [
   "hist_her",
   "penyerahan_ktm",
   "kalender_akademik",
+  "status_mhs",
+  "peserta_mk",
   "instruksi_tugas",
 ] as const;
 export type CampusDataJenis = (typeof CAMPUS_DATA_JENIS)[number];
