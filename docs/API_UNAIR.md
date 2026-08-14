@@ -166,12 +166,27 @@ Catatan:
 
 ---
 
-## 4. unairsatu — `unairsatu.unair.ac.id/site/login`
+## 4. unairsatu — `unairsatu.unair.ac.id/site/login` (UNAIR SATU)
 
-Belum diselidiki sama sekali. Yang diketahui hanya URL login (`/site/login`).
-Sebelum integrasi apa pun: tentukan dulu fungsinya (kemungkinan: portal
-layanan terpadu — sambungan internet/akun?), bandingkan dengan yang sudah
-ada, lalu discovery dengan akun sendiri.
+Discovery pasif selesai **2026-08-15** (subagent Explore). **Verdict: tidak
+ada data yang relevan untuk ForFH — tidak direncanakan integrasi.**
+
+- **Fungsi**: "SSO - Universitas Airlangga" — gateway Single Sign-On UNAIR
+  (Yii2 PHP, `v1.2.4`). Login sekali (NIM/NIP/NIK + password Cybercampus)
+  untuk mengakses layanan: Cybercampus V2, logbook Pengmas/SPTJM, VPN kampus.
+- **Fingerprint**: Yii2 (route `/site/login` = default Yii2), CAPTCHA di
+  `/site/gambar-captcha`, HTML server-rendered (bukan SPA), `robots.txt`
+  membolehkan semua path di-crawl. Header HTTP tidak bisa dicek via fetch
+  publik (hanya markdown).
+- **Form login**: username + password + CAPTCHA. **Tidak ada OAuth**
+  (Google/Facebook) — murni kredensial internal.
+- **Endpoint publik**: tidak ada yang terkonfirmasi — `/site/register`,
+  `/user/register`, `/api`, dan path acak semuanya balas HTTP 500 (error
+  handler Yii2 menutup 404 sebagai 500), jadi keberadaan route tidak bisa
+  dibedakan dari luar.
+- **Model kredensial**: NIM/NIP/NIK + password Cybercampus berlaku lintas
+  layanan UNAIR — konsisten dengan temuan portal lain (password sama di
+  Kampus Kita, HE-BAT, Kube).
 
 ---
 
