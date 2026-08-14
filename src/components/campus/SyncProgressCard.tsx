@@ -25,6 +25,16 @@ interface SyncStatus {
   lastSyncError?: string | null;
 }
 
+// Waktu kejadian status terakhir, lokal user: "14 Agu 2026, 23.13".
+// Dipakai untuk membedakan error/sukses baru vs riwayat lama — tanpa ini,
+// pesan error dari sync kemarin tampil identik dengan yang baru saja terjadi.
+function formatSyncTime(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+}
+
 export function SyncProgressCard({ className = "" }: { className?: string }) {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [polling, setPolling] = useState(false);
@@ -127,14 +137,26 @@ export function SyncProgressCard({ className = "" }: { className?: string }) {
       ) : justDone ? (
         <div className="flex items-center gap-2 text-xs text-status-success">
           <CheckCircle2 className="h-4 w-4" />
-          Sinkronisasi selesai — data kampus sudah diperbarui.
+          <span>
+            Sinkronisasi selesai — data kampus sudah diperbarui.
+            {formatSyncTime(status.lastSyncAt) && (
+              <span className="text-muted-foreground"> ({formatSyncTime(status.lastSyncAt)})</span>
+            )}
+          </span>
         </div>
       ) : hasError ? (
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-start gap-2 text-xs text-status-danger min-w-0">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <p className="font-medium">Sinkronisasi gagal</p>
+              <p className="font-medium">
+                Sinkronisasi gagal
+                {formatSyncTime(status.lastSyncAt) && (
+                  <span className="font-normal text-muted-foreground">
+                    {" "}· {formatSyncTime(status.lastSyncAt)}
+                  </span>
+                )}
+              </p>
               <p className="text-muted-foreground truncate">{status.lastSyncError}</p>
             </div>
           </div>
