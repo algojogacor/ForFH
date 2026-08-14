@@ -238,6 +238,76 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(!corrupted.creds.me, "creds korup → initAuthCreds() baru (fallback)");
   }
 
+  // ===== Keystore konvensi BARU Baileys rc14 (libsignal.js) =====
+  // set({ [type]: { [id]: data } }) — key = type SAJA, id di dalam value.
+  // REGRESI live: baris tertulis (type='sessio', key='session') → get miss →
+  // sesi hilang tiap restart bot. Fix: baris batch disimpan (type, type) dan
+  // get() meng-ekstrak per-id.
+  {
+    const memDb = await createMemDb();
+    const store = new WaSessionStore(memDb);
+
+    // set batch (key = type) → get per-id
+    await store.set({ session: { jidA: Buffer.from("sesi-a"), jidB: "sesi-b" } } as any);
+    const s1 = await store.get("session", ["jidA", "jidB", "jidC"]);
+    assert(Buffer.isBuffer(s1["jidA"]) && s1["jidA"].toString() === "sesi-a", "batch set: nilai Buffer per-id utuh (konvensi baru)");
+    assert(s1["jidB"] === "sesi-b" && s1["jidC"] === undefined, "batch set: get per-id → hanya id yang ada");
+
+    // row fisik: SATU baris (type='session', key='session') — bukan per-id
+    const batchRow = await memDb.select().from(dbSchema.waSignalKeys)
+      .where(and(eq(dbSchema.waSignalKeys.type, "session"), eq(dbSchema.waSignalKeys.key, "session"))).limit(1).then((r) => r[0]);
+    assert(!!batchRow && batchRow.value.startsWith("j:"), "batch set: tersimpan satu baris (type=key=session)");
+
+    // update satu id → id lain tetap
+    await store.set({ session: { jidA: "sesi-a-v2" } } as any);
+    const s2 = await store.get("session", ["jidA", "jidB"]);
+    assert(s2["jidA"] === "sesi-a-v2" && s2["jidB"] === "sesi-b", "batch update: id ditimpa, id lain tetap");
+
+    // delete satu id via null → id hilang, baris lain tetap
+    await store.set({ session: { jidA: null } } as any);
+    const s3 = await store.get("session", ["jidA", "jidB"]);
+    assert(s3["jidA"] === undefined && s3["jidB"] === "sesi-b", "batch delete: id null → hilang, id lain tetap");
+
+    // delete semua id → baris batch dihapus
+    await store.set({ session: { jidB: null } } as any);
+    const s4 = await store.get("session", ["jidB"]);
+    const batchRow2 = await memDb.select().from(dbSchema.waSignalKeys)
+      .where(and(eq(dbSchema.waSignalKeys.type, "session"), eq(dbSchema.waSignalKeys.key, "session"))).limit(1).then((r) => r[0]);
+    assert(s4["jidB"] === undefined && !batchRow2, "batch delete semua id → baris type dihapus");
+
+    // pending overlay dalam transaksi (baca nilai batch yang baru di-set)
+    await store.transaction(async () => {
+      await store.set({ "pre-key": { k1: Buffer.from("pk1"), k2: "pk2" } } as any);
+      const pk = await store.get("pre-key", ["k1", "k2", "k3"]);
+      assert(Buffer.isBuffer(pk["k1"]) && pk["k1"].toString() === "pk1" && pk["k2"] === "pk2" && pk["k3"] === undefined,
+        "batch set dalam transaksi → get() membaca pending (konvensi baru)");
+    });
+    const pkCommitted = await store.get("pre-key", ["k1", "k2"]);
+    assert(Buffer.isBuffer(pkCommitted["k1"]) && pkCommitted["k2"] === "pk2", "batch transaksi → commit utuh");
+
+    // restart: instance store baru → batch masih terbaca dari DB
+    await store.set({ session: { jidC: "sesi-c" } } as any);
+    const storeR = new WaSessionStore(memDb);
+    const sR = await storeR.get("session", ["jidC"]);
+    assert(sR["jidC"] === "sesi-c", "restart: baris batch type tetap terbaca (konvensi baru)");
+
+    // campuran: konvensi lama & baru untuk TYPE yang sama → keduanya terbaca
+    await store.set({ "lid-mapping:jidX": "628x" });
+    await store.set({ "lid-mapping": { jidY: "628y" } } as any);
+    const mixed = await store.get("lid-mapping", ["jidX", "jidY"]);
+    assert(mixed["jidX"] === "628x" && mixed["jidY"] === "628y", "campuran lama+baru: kedua baris terbaca (merge)");
+
+    // v1: baris batch (terenkripsi) tetap di-decrypt saat get
+    process.env.SESSION_SECRET = TEST_LEGACY_SECRET;
+    const encBatch = await memDb.select().from(dbSchema.waSignalKeys)
+      .where(and(eq(dbSchema.waSignalKeys.type, "session"), eq(dbSchema.waSignalKeys.key, "session"))).limit(1).then((r) => r[0]);
+    await memDb.update(dbSchema.waSignalKeys)
+      .set({ value: encryptV1Fixture(encBatch!.value) })
+      .where(and(eq(dbSchema.waSignalKeys.type, "session"), eq(dbSchema.waSignalKeys.key, "session")));
+    const v1got = await store.get("session", ["jidC"]);
+    assert(v1got["jidC"] === "sesi-c", "batch v1: (terenkripsi) tetap di-decrypt saat get");
+  }
+
   // ===== F1 — Health model (pure) =====
   {
     const base: WaHealthIndicators = {

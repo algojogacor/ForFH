@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import type { AuthenticationCreds, AuthenticationState, SignalKeyStore } from "@whiskeysockets/baileys";
 import * as schema from "@/lib/db/schema";
@@ -104,7 +104,12 @@ export class WaSessionStore implements SignalKeyStore {
       .onConflictDoUpdate({ target: schema.appConfig.key, set: { value: payload } });
   }
 
-  /** Batch SELECT per namespace + decode. Value hilang = tidak ada. */
+  /** Batch SELECT per namespace + decode. Value hilang = tidak ada.
+   *  Baileys rc14 memakai DUA konvensi key:
+   *  - lama: `type:jid` → satu baris per id (key = jid);
+   *  - baru (libsignal.js): set({ [type]: { [id]: data } }) → key = type SAJA,
+   *    id ada di DALAM value (objek). get() tetap dipanggil per-id, jadi baris
+   *    batch harus di-ekstrak per id yang diminta. Keduanya dicari sekaligus. */
   async get(type: string, ids: string[]): Promise<Record<string, any>> {
     if (!ids.length) return {};
     const out: Record<string, any> = {};
@@ -113,17 +118,34 @@ export class WaSessionStore implements SignalKeyStore {
       const txVal = this.pending?.get(`${type}:${id}`);
       if (txVal === null) continue; // dihapus dalam transaksi
       if (txVal !== undefined) { out[id] = decodeValue(txVal); continue; }
+      // konvensi baru: baris batch (key = type) di pending map juga
+      const txNew = this.pending?.get(type);
+      if (txNew !== undefined) {
+        if (txNew === null) continue; // seluruh baris batch dihapus dalam transaksi
+        const obj = decodeValue(txNew) as Record<string, any>;
+        if (obj && typeof obj === "object" && id in obj) { out[id] = obj[id]; continue; }
+      }
       missing.push(id);
     }
     if (missing.length) {
       const rows = await this.db
         .select().from(schema.waSignalKeys)
-        .where(and(eq(schema.waSignalKeys.type, type), inArray(schema.waSignalKeys.key, missing)));
+        .where(and(
+          eq(schema.waSignalKeys.type, type),
+          or(inArray(schema.waSignalKeys.key, missing), eq(schema.waSignalKeys.key, type)),
+        ));
       for (const row of rows) {
         try {
-          out[row.key] = isLegacyV1(row.value)
-            ? decodeValue(decryptLegacyV1(row.value))
-            : decodeValue(row.value);
+          const raw = isLegacyV1(row.value) ? decryptLegacyV1(row.value) : row.value;
+          if (row.key === type) {
+            // konvensi baru: value = objek { [id]: data } → ekstrak per id
+            const obj = decodeValue(raw) as Record<string, any>;
+            if (obj && typeof obj === "object") {
+              for (const id of missing) if (id in obj) out[id] = obj[id];
+            }
+          } else {
+            out[row.key] = decodeValue(raw);
+          }
         } catch (err) { logger.warn("gagal decode signal key", { type, key: row.key }, err); }
       }
     }
@@ -183,6 +205,13 @@ export class WaSessionStore implements SignalKeyStore {
   private async applyOps(ops: Array<[string, string | null]>): Promise<void> {
     for (const [k, v] of ops) {
       const sep = k.indexOf(":");
+      if (sep === -1) {
+        // Konvensi Baileys rc14: set({ [type]: { [id]: data } }) — key = type
+        // SAJA, id di dalam value. Simpan sebagai satu baris (type, type);
+        // entry null/undefined di dalam objek = DELETE id itu (semantik Baileys).
+        await this.applyBatchValue(k, v);
+        continue;
+      }
       const type = k.slice(0, sep);
       const key = k.slice(sep + 1);
       if (v === null) {
@@ -197,5 +226,54 @@ export class WaSessionStore implements SignalKeyStore {
           });
       }
     }
+  }
+
+  /** Gabungkan batch baru ke batch lama (upsert per-id — Baileys memanggil
+   *  set({ [type]: { [id]: data } }) per-id; replace akan menghapus id lain):
+   *  null/undefined di `next` → id dihapus; selain itu → id ditimpa. */
+  private mergeBatchObj(base: unknown, next: unknown): Record<string, any> {
+    const out: Record<string, any> = {};
+    if (base && typeof base === "object" && !Buffer.isBuffer(base)) {
+      for (const [id, val] of Object.entries(base as Record<string, any>)) {
+        if (val !== null && val !== undefined) out[id] = val;
+      }
+    }
+    if (next && typeof next === "object" && !Buffer.isBuffer(next)) {
+      for (const [id, val] of Object.entries(next as Record<string, any>)) {
+        if (val === null || val === undefined) delete out[id];
+        else out[id] = val;
+      }
+    }
+    return out;
+  }
+
+  /** Satu baris per type (konvensi baru): value = objek { [id]: data }.
+   *  MERGE dengan baris existing (jangan replace — id lain di baris batch
+   *  harus tetap hidup); entry null → id dihapus; objek kosong → baris dihapus. */
+  private async applyBatchValue(type: string, v: string | null): Promise<void> {
+    if (v === null) {
+      await this.db.delete(schema.waSignalKeys)
+        .where(and(eq(schema.waSignalKeys.type, type), eq(schema.waSignalKeys.key, type)));
+      return;
+    }
+    const next = decodeValue(v);
+    const row = await this.db
+      .select({ value: schema.waSignalKeys.value }).from(schema.waSignalKeys)
+      .where(and(eq(schema.waSignalKeys.type, type), eq(schema.waSignalKeys.key, type))).limit(1)
+      .then((r) => r[0]);
+    const prev = row ? (isLegacyV1(row.value) ? decodeValue(decryptLegacyV1(row.value)) : decodeValue(row.value)) : undefined;
+    const merged = this.mergeBatchObj(prev, next);
+    if (!Object.keys(merged).length) {
+      await this.db.delete(schema.waSignalKeys)
+        .where(and(eq(schema.waSignalKeys.type, type), eq(schema.waSignalKeys.key, type)));
+      return;
+    }
+    const enc = encodeValue(merged);
+    await this.db
+      .insert(schema.waSignalKeys).values({ type, key: type, value: enc })
+      .onConflictDoUpdate({
+        target: [schema.waSignalKeys.type, schema.waSignalKeys.key],
+        set: { value: enc },
+      });
   }
 }
