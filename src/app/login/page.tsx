@@ -114,7 +114,6 @@ export default function LoginPage() {
             Gunakan email dan password <span className="text-foreground font-medium">Kampus Kita</span>.
             <br />
             Jadwal, presensi, nilai, dan tugas HE-BAT tersinkron otomatis.
-            Password disimpan apa adanya di database pribadimu setelah verifikasi.
           </div>
         </div>
       </div>
