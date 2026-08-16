@@ -43,3 +43,8 @@ next-env.d.ts
 *.db
 *.db-journal
 forfh-local.db*
+
+# Skills lokal agent (jangan masuk remote)
+.claude/skills/
+.agents/
+skills-lock.json
