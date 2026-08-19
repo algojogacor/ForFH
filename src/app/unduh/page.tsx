@@ -47,13 +47,21 @@ async function getLatestRelease(): Promise<GitHubRelease | null> {
 export default async function UnduhPage() {
   const user = await getSessionUser();
   const release = await getLatestRelease();
-  const tagName = release?.tag_name || "v2.4.0";
+  const tagName = release?.tag_name || "v2.5.0";
   const apkAsset = release?.assets?.find((a) => a.name.endsWith(".apk"));
   const downloadUrl =
     apkAsset?.browser_download_url ||
     `https://github.com/algojogacor/ForFH-Android/releases/download/${tagName}/app-release.apk`;
 
   const highlights = [
+    {
+      title: "Desain Baru Layar Masuk (Login)",
+      desc: "Tampilan modern dengan logo resmi ForFH, kartu login terangkat, dan tombol intip password.",
+    },
+    {
+      title: "Perbaikan Tampilan Pengaturan",
+      desc: "Perapihan status pembaruan dan tombol cek update agar tampil rapi dan nyaman dibaca.",
+    },
     {
       title: "Pratinjau Catatan Rilis Online",
       desc: "Intip langsung daftar perubahan versi baru dari GitHub Releases di layar Pengaturan sebelum memutuskan update.",
@@ -65,10 +73,6 @@ export default async function UnduhPage() {
     {
       title: "Widget Home Screen Dipoles",
       desc: "Nama mata kuliah tampil sebagai judul utama dan format lokasi ruangan diringkas cerdas (contoh: 'R. LG02 B').",
-    },
-    {
-      title: "Fitur Pembatalan Tugas (Uncheck)",
-      desc: "Tugas yang sudah selesai kini bisa dibatalkan ceklisnya untuk dikembalikan ke daftar tugas aktif.",
     },
     {
       title: "Sistem Kalender 3 Mode & Presensi",
