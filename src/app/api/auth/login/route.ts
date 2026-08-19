@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     logger.error("Login error:", error);
     return NextResponse.json(
-      { error: "Terjadi kesalahan internal saat memproses login." },
+      { error: "Terjadi kesalahan internal saat memproses login: " + (error?.message || String(error)) },
       { status: 500 }
     );
   }
