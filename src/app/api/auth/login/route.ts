@@ -29,9 +29,9 @@ export async function POST(req: NextRequest) {
     const rateLimitKey = `campus-login:${emailNormalized}:${ip}`;
 
     const rateLimit = await checkRateLimit(rateLimitKey, {
-      maxAttempts: 5,
+      maxAttempts: 20,
       windowMs: 5 * 60 * 1000,
-      blockDurationMs: 15 * 60 * 1000,
+      blockDurationMs: 60 * 1000,
     });
     if (!rateLimit.allowed) {
       return NextResponse.json({ error: rateLimit.error }, { status: 429 });
