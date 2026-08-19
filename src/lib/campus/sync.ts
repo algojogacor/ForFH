@@ -237,21 +237,60 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     // --- upsert courses (externalId = kode MK) ----------------------------------
     await setSyncStep(userId, "kursus");
     const courseIdsByCode = new Map<string, string>();
-    let courseCount = 0;
+
+    // 1. Deduplicate unique courses from schedules by external ID
+    const uniqueCoursesMap = new Map<string, typeof schedules[0]>();
     for (const s of schedules) {
       const ext = s.courseCode || s.courseName;
       if (!ext) continue;
-      const course = await upsertByExternal(courses, userId, ext, {
+      if (!uniqueCoursesMap.has(ext)) {
+        uniqueCoursesMap.set(ext, s);
+      }
+    }
+
+    // 2. Batch fetch existing courses for this user
+    const existingUserCourses = await db.select().from(courses).where(eq(courses.userId, userId));
+    const existingCourseByExt = new Map(existingUserCourses.map((c) => [c.externalId, c]));
+
+    const newCoursesToInsert: any[] = [];
+    const courseUpdates: Promise<any>[] = [];
+
+    for (const [ext, s] of uniqueCoursesMap.entries()) {
+      const existing = existingCourseByExt.get(ext);
+      const courseValues = {
         name: s.courseName || s.courseCode,
         code: s.courseCode || null,
         lecturer: s.lecturer || null,
         credits: s.credits,
         defaultRoom: s.room || null,
-      });
-      if (s.courseCode) courseIdsByCode.set(s.courseCode, course.id);
-      if (!courseIdsByCode.has(ext)) courseIdsByCode.set(ext, course.id);
-      courseCount++;
+      };
+
+      if (existing) {
+        courseIdsByCode.set(ext, existing.id);
+        if (s.courseCode) courseIdsByCode.set(s.courseCode, existing.id);
+        courseUpdates.push(
+          db.update(courses).set({ ...courseValues, updatedAt: new Date() }).where(eq(courses.id, existing.id))
+        );
+      } else {
+        const newId = crypto.randomUUID();
+        courseIdsByCode.set(ext, newId);
+        if (s.courseCode) courseIdsByCode.set(s.courseCode, newId);
+        newCoursesToInsert.push({
+          id: newId,
+          userId,
+          externalId: ext,
+          ...courseValues,
+        });
+      }
     }
+
+    if (newCoursesToInsert.length > 0) {
+      await db.insert(courses).values(newCoursesToInsert);
+    }
+    if (courseUpdates.length > 0) {
+      await Promise.all(courseUpdates);
+    }
+    const courseCount = uniqueCoursesMap.size;
 
     // --- upsert class_schedules (externalId = kode|hari|mulai|selesai) -----------
     let scheduleCount = 0;
