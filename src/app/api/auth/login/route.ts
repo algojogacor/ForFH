@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, users, campusAccounts } from "@/lib/db";
 import { createSession, SESSION_COOKIE_NAME } from "@/lib/auth/session";
-import { checkRateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { loginCampus, KampusKitaClient, KampusKitaError } from "@/lib/campus/kampuskita";
 import { connectHebat } from "@/lib/campus/hebat";
 import { runCampusSync, saveHebatToken, markSyncError } from "@/lib/campus/sync";
@@ -76,8 +75,6 @@ export async function POST(req: NextRequest) {
         lastSyncStatus: "never",
       });
     }
-
-    await resetRateLimit(rateLimitKey);
 
     // 4. Sesi ForFH
     const { token, expiresAt } = await createSession(user.id);
