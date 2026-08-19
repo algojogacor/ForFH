@@ -125,10 +125,19 @@ export async function processDueReminders(): Promise<{
   const currentDayOfWeek = now.getDay(); // 0 = Sun, 1 = Mon ...
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-  // Cap per tick: 50 user (tick QStash punya batas durasi)
-  const activeUsers = (await db
+  // Cap per tick: 50 user — ambil user yang punya Web Push ATAU WhatsApp aktif
+  const pushUsers = await db
     .selectDistinct({ userId: pushSubscriptions.userId })
-    .from(pushSubscriptions)).slice(0, 50);
+    .from(pushSubscriptions);
+  const waUsers = await db
+    .selectDistinct({ userId: waBindings.userId })
+    .from(waBindings)
+    .where(eq(waBindings.status, "active"));
+
+  const userIds = Array.from(
+    new Set([...pushUsers.map((u) => u.userId), ...waUsers.map((u) => u.userId)])
+  ).slice(0, 50);
+  const activeUsers = userIds.map((userId) => ({ userId }));
 
   let notificationsSent = 0;
 
@@ -309,4 +318,22 @@ export async function processDueReminders(): Promise<{
   });
 
   return { processedUsers: activeUsers.length, notificationsSent };
+}
+
+let reminderLoopTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Loop background 60s internal di dalam container Koyeb (self-healing scheduler).
+ * Memastikan notifikasi kuliah & tugas tetap terproses setiap 1 menit
+ * bahkan jika webhook QStash belum disetel.
+ */
+export function startInternalReminderLoop(): void {
+  if (reminderLoopTimer) return;
+  reminderLoopTimer = setInterval(async () => {
+    try {
+      await processDueReminders();
+    } catch (err) {
+      logger.warn("internal reminder loop error:", err);
+    }
+  }, 60 * 1000);
 }

@@ -258,6 +258,7 @@ export class WaClientManager {
     // (client-manager ↔ pipeline ↔ send ↔ client-manager).
     void import("./pipeline").then((m) => m.registerMessagePipeline(this)).catch((e) => logger.warn("wa: wiring pipeline gagal", e));
     void import("./pairing").then((m) => m.registerPairingHooks(this)).catch((e) => logger.warn("wa: wiring pairing gagal", e));
+    void import("@/lib/notifications/worker").then((m) => m.startInternalReminderLoop()).catch((e) => logger.warn("worker: startInternalReminderLoop error", e));
   }
 
   private async handleConnectionUpdate(sock: WASocket, update: any): Promise<void> {
