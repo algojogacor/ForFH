@@ -17,6 +17,7 @@ import {
   FolderLock,
   Settings,
   Building2,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +47,7 @@ const NAV_GROUPS = [
       { href: "/kehadiran", label: "Presensi", icon: UserCheck },
       { href: "/nilai", label: "Nilai & IPK", icon: Award },
       { href: "/berkas", label: "Berkas", icon: FolderLock },
+      { href: "/unduh", label: "Unduh APK", icon: Download },
     ],
   },
 ];

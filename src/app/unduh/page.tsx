@@ -1,7 +1,10 @@
 import React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Download, Sparkles, CheckCircle2, ShieldCheck, ArrowRight, Smartphone, HelpCircle } from "lucide-react";
+import { Download, Sparkles, ShieldCheck, Smartphone, HelpCircle, ArrowRight } from "lucide-react";
+import { getSessionUser } from "@/lib/auth/session";
+import { AppShell } from "@/components/layout/AppShell";
+import { PageContainer } from "@/components/ui/PageContainer";
 
 export const metadata: Metadata = {
   title: "Unduh ForFH Android — Aplikasi Pendamping Mahasiswa FH UNAIR",
@@ -31,7 +34,7 @@ async function getLatestRelease(): Promise<GitHubRelease | null> {
           Accept: "application/vnd.github.v3+json",
           "User-Agent": "ForFH-Web",
         },
-        next: { revalidate: 300 }, // Cache 5 menit
+        next: { revalidate: 60 },
       }
     );
     if (!res.ok) return null;
@@ -42,8 +45,9 @@ async function getLatestRelease(): Promise<GitHubRelease | null> {
 }
 
 export default async function UnduhPage() {
+  const user = await getSessionUser();
   const release = await getLatestRelease();
-  const tagName = release?.tag_name || "v2.3.0";
+  const tagName = release?.tag_name || "v2.4.0";
   const apkAsset = release?.assets?.find((a) => a.name.endsWith(".apk"));
   const downloadUrl =
     apkAsset?.browser_download_url ||
@@ -51,24 +55,24 @@ export default async function UnduhPage() {
 
   const highlights = [
     {
+      title: "Pratinjau Catatan Rilis Online",
+      desc: "Intip langsung daftar perubahan versi baru dari GitHub Releases di layar Pengaturan sebelum memutuskan update.",
+    },
+    {
       title: "Ikon Baru Minimalis",
       desc: "Desain logo timbangan hukum geometris abstrak elegan dengan tema obsidian black.",
     },
     {
       title: "Widget Home Screen Dipoles",
-      desc: "Nama mata kuliah tampil sebagai judul utama dan format lokasi ruangan otomatis diringkas (contoh: 'R. LG02 B').",
+      desc: "Nama mata kuliah tampil sebagai judul utama dan format lokasi ruangan diringkas cerdas (contoh: 'R. LG02 B').",
     },
     {
       title: "Fitur Pembatalan Tugas (Uncheck)",
-      desc: "Tugas yang sudah selesai kini bisa dibatalkan ceklisnya untuk dikembalikan ke daftar aktif.",
+      desc: "Tugas yang sudah selesai kini bisa dibatalkan ceklisnya untuk dikembalikan ke daftar tugas aktif.",
     },
     {
       title: "Sistem Kalender 3 Mode & Presensi",
       desc: "Beralih mulus antara Hari Ini, Seminggu, dan Bulan dengan indikator multi-dot agenda kuliah & tugas.",
-    },
-    {
-      title: "Catatan Perubahan & Cek Update In-App",
-      desc: "Pantau riwayat versi lengkap dan notifikasi pembaruan langsung di dalam aplikasi.",
     },
   ];
 
@@ -76,12 +80,12 @@ export default async function UnduhPage() {
     {
       step: "1",
       title: "Unduh File APK",
-      desc: "Ketuk tombol Unduh APK di atas untuk mengunduh paket instalasi resmi ForFH Android.",
+      desc: "Ketuk tombol Unduh APK untuk mengunduh paket instalasi resmi ForFH Android.",
     },
     {
       step: "2",
       title: "Izinkan Instalasi",
-      desc: "Jika muncul peringatan keamanan browser, pilih 'Tetap Unduh' lalu aktifkan izin 'Install dari sumber tidak dikenal' untuk browser Anda.",
+      desc: "Jika muncul peringatan browser, pilih 'Tetap Unduh' lalu izinkan 'Install dari sumber tidak dikenal'.",
     },
     {
       step: "3",
@@ -95,139 +99,179 @@ export default async function UnduhPage() {
     },
   ];
 
-  return (
-    <div className="min-h-screen bg-[#09090b] text-neutral-100 selection:bg-[#5e6ad2] selection:text-white">
-      {/* Background Glow */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[600px] h-[350px] bg-gradient-to-b from-[#5e6ad2]/20 to-transparent blur-[120px] rounded-full" />
-      </div>
-
-      {/* Navigation Bar */}
-      <header className="relative z-10 max-w-4xl mx-auto px-6 py-8 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 group">
-          <div className="w-8 h-8 rounded-lg bg-neutral-900 border border-neutral-800 flex items-center justify-center font-bold text-sm text-[#5e6ad2] group-hover:border-[#5e6ad2]/50 transition-colors">
-            ⚖
-          </div>
-          <span className="font-semibold text-base tracking-tight text-white group-hover:text-neutral-200 transition-colors">
-            ForFH
-          </span>
-        </Link>
-        <Link
-          href="/"
-          className="text-xs font-medium text-neutral-400 hover:text-white px-3 py-1.5 rounded-md border border-neutral-800 hover:border-neutral-700 transition-colors"
-        >
-          Buka Web Portal →
-        </Link>
-      </header>
-
-      {/* Hero Section */}
-      <main className="relative z-10 max-w-3xl mx-auto px-6 pt-4 pb-20 space-y-12">
-        <div className="text-center space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5e6ad2]/10 border border-[#5e6ad2]/30 text-[#8b95f6] text-xs font-mono font-medium">
-            <span className="w-2 h-2 rounded-full bg-[#5e6ad2] animate-pulse" />
-            Rilis Terbaru {tagName}
-          </div>
-
-          <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-white leading-tight">
-            Aplikasi Android Mahasiswa <br className="hidden sm:inline" />
-            <span className="bg-gradient-to-r from-white via-neutral-200 to-neutral-400 bg-clip-text text-transparent">
-              Fakultas Hukum UNAIR
-            </span>
+  const content = (
+    <div className="space-y-8 animate-entrance">
+      {/* 1. Header & Hero Section */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-4 border-b border-border-default">
+        <div className="space-y-1">
+          <p className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
+            APLIKASI ANDROID RESMI
+          </p>
+          <h1 className="font-editorial italic text-3xl sm:text-4xl text-foreground font-normal">
+            Unduh ForFH Android
           </h1>
-
-          <p className="text-sm sm:text-base text-neutral-400 max-w-xl mx-auto leading-relaxed">
+          <p className="text-sm text-secondary max-w-xl leading-relaxed pt-1">
             Sinkronisasi jadwal kuliah otomatis, fullscreen alarm sebelum kelas, manajemen tugas Todoist, dan widget layar utama minimalis.
           </p>
+        </div>
 
-          {/* Download CTA Card */}
-          <div className="pt-4 flex flex-col sm:flex-row items-center justify-center gap-3">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono bg-accent-subtle text-accent border border-accent/20 font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+            {tagName} Rilis Terbaru
+          </span>
+        </div>
+      </div>
+
+      {/* 2. Download Action CTA Card */}
+      <div className="p-6 rounded-lg border border-border-default bg-surface-1 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold text-foreground">
+              Paket Instalasi Mandiri (APK)
+            </h2>
+            <p className="text-xs text-secondary">
+              Versi rilis stabil untuk perangkat Android 8.0 (Oreo) ke atas. Bebas iklan & terverifikasi.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
             <a
               href={downloadUrl}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-[#5e6ad2] hover:bg-[#4f5bc0] text-white font-semibold text-sm shadow-lg shadow-[#5e6ad2]/20 hover:shadow-[#5e6ad2]/30 transition-all transform active:scale-[0.98]"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-md bg-primary hover:bg-accent-hover text-primary-foreground font-medium text-sm transition-colors shadow-sm"
             >
-              <Download className="w-4 h-4" />
+              <Download className="h-4 w-4" />
               <span>Unduh APK ({tagName})</span>
             </a>
+
             <a
               href={`https://github.com/algojogacor/ForFH-Android/releases/tag/${tagName}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 text-sm font-medium transition-colors"
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md bg-surface-2 hover:bg-surface-3 border border-border-default text-foreground text-sm font-medium transition-colors"
             >
-              <span>Lihat di GitHub</span>
-              <ArrowRight className="w-3.5 h-3.5 text-neutral-500" />
+              <span>Catatan Rilis</span>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
             </a>
-          </div>
-
-          <div className="flex items-center justify-center gap-6 pt-2 text-xs text-neutral-500 font-mono">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              Bebas Iklan & Aman
-            </span>
-            <span>•</span>
-            <span className="flex items-center gap-1.5">
-              <Smartphone className="w-3.5 h-3.5 text-neutral-400" />
-              Android 8.0 (Oreo)+
-            </span>
           </div>
         </div>
 
-        {/* Highlights / What's New */}
-        <section className="p-6 rounded-2xl bg-[#111113] border border-neutral-800/80 space-y-4 shadow-xl">
-          <div className="flex items-center gap-2 pb-2 border-b border-neutral-800/60">
-            <Sparkles className="w-4 h-4 text-[#8b95f6]" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-300 font-mono">
+        <div className="pt-2 border-t border-border-subtle flex flex-wrap items-center gap-4 text-xs font-mono text-muted-foreground">
+          <span className="flex items-center gap-1 text-status-success">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Terverifikasi & Aman
+          </span>
+          <span>•</span>
+          <span className="flex items-center gap-1">
+            <Smartphone className="h-3.5 w-3.5" />
+            Android 8.0+
+          </span>
+          <span>•</span>
+          <span>Target SDK 36</span>
+        </div>
+      </div>
+
+      {/* 3. Apa yang Baru di Versi Ini */}
+      <div className="p-6 rounded-lg border border-border-default bg-surface-1 shadow-sm space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-accent" />
+            <h2 className="font-editorial italic text-xl text-foreground font-medium">
               Apa yang baru di versi {tagName}
             </h2>
           </div>
+          <span className="text-xs font-mono text-muted-foreground">Rilis Terbaru</span>
+        </div>
 
-          <div className="grid gap-3 sm:grid-cols-1">
-            {highlights.map((item, idx) => (
-              <div key={idx} className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-neutral-900/50 transition-colors">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#5e6ad2] mt-2 shrink-0" />
-                <div className="space-y-0.5">
-                  <div className="text-sm font-medium text-neutral-200">{item.title}</div>
-                  <div className="text-xs text-neutral-400 leading-relaxed">{item.desc}</div>
-                </div>
+        <div className="grid gap-3 sm:grid-cols-1">
+          {highlights.map((item, idx) => (
+            <div key={idx} className="flex items-start gap-3 p-2 rounded-md hover:bg-surface-2/60 transition-colors">
+              <div className="w-1.5 h-1.5 rounded-full bg-accent mt-2 shrink-0" />
+              <div className="space-y-0.5">
+                <div className="text-sm font-medium text-foreground">{item.title}</div>
+                <div className="text-xs text-secondary leading-relaxed">{item.desc}</div>
               </div>
-            ))}
-          </div>
-        </section>
+            </div>
+          ))}
+        </div>
+      </div>
 
-        {/* Sideload Installation Guide */}
-        <section className="space-y-4">
-          <div className="flex items-center gap-2">
-            <HelpCircle className="w-4 h-4 text-neutral-400" />
-            <h2 className="text-base font-semibold text-neutral-200">
-              Panduan Cara Install APK di Android
-            </h2>
-          </div>
+      {/* 4. Panduan Cara Install */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <HelpCircle className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-mono uppercase tracking-wider text-muted-foreground font-semibold">
+            Panduan Cara Install APK di HP Android
+          </h2>
+        </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            {installSteps.map((s) => (
-              <div
-                key={s.step}
-                className="p-4 rounded-xl bg-neutral-900/60 border border-neutral-800/70 space-y-2 flex flex-col justify-between"
-              >
-                <div className="space-y-1.5">
-                  <div className="w-6 h-6 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center text-xs font-bold font-mono text-[#8b95f6]">
-                    {s.step}
-                  </div>
-                  <h3 className="text-sm font-semibold text-neutral-200">{s.title}</h3>
-                  <p className="text-xs text-neutral-400 leading-relaxed">{s.desc}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {installSteps.map((s) => (
+            <div
+              key={s.step}
+              className="p-4 rounded-md border border-border-default bg-surface-1 shadow-sm space-y-2 flex flex-col justify-between"
+            >
+              <div className="space-y-1.5">
+                <div className="w-6 h-6 rounded-full bg-surface-2 border border-border-default flex items-center justify-center text-xs font-mono font-semibold text-accent">
+                  {s.step}
                 </div>
+                <h3 className="text-sm font-semibold text-foreground">{s.title}</h3>
+                <p className="text-xs text-secondary leading-relaxed">{s.desc}</p>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
+        </div>
 
-          <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 leading-relaxed">
-            <strong>Catatan Keamanan:</strong> Android mungkin menampilkan peringatan <em>&quot;File ini mungkin berbahaya&quot;</em> karena APK diunduh langsung dari web (bukan Google Play Store). File APK ini 100% aman dan dibangun langsung dari kode sumber resmi ForFH.
-          </div>
-        </section>
+        <div className="p-3.5 rounded-md border border-border-default bg-surface-2 text-xs text-secondary leading-relaxed">
+          <span className="font-semibold text-foreground">Catatan Keamanan:</span> Android mungkin menampilkan dialog <em>&quot;File ini mungkin berbahaya&quot;</em> karena APK diunduh dari luar Google Play Store. File instalasi ForFH ini resmi dan bebas dari pelacak pihak ketiga.
+        </div>
+      </div>
+    </div>
+  );
+
+  if (user) {
+    return (
+      <AppShell user={user}>
+        <PageContainer variant="standard">
+          {content}
+        </PageContainer>
+      </AppShell>
+    );
+  }
+
+  // Public visitor layout (authentic Paper & Ink)
+  return (
+    <div className="min-h-screen bg-canvas text-foreground selection:bg-accent-subtle selection:text-primary">
+      {/* Top Header */}
+      <header className="border-b border-border-default bg-sidebar px-6 py-4">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2 group">
+            <span className="font-editorial italic text-2xl font-medium tracking-tight text-foreground group-hover:text-primary transition-colors">
+              ForFH
+            </span>
+            <span className="text-[10px] font-mono tracking-widest text-muted-foreground uppercase">
+              OS
+            </span>
+          </Link>
+          <Link
+            href="/login"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-1 hover:bg-surface-2 border border-border-default text-foreground text-xs font-medium transition-colors shadow-xs"
+          >
+            <span>Masuk Web Portal</span>
+            <ArrowRight className="h-3 w-3 text-muted-foreground" />
+          </Link>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+        <PageContainer variant="standard">
+          {content}
+        </PageContainer>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-neutral-900 py-8 text-center text-xs text-neutral-500 font-mono">
+      <footer className="border-t border-border-default bg-sidebar py-8 text-center text-xs text-muted-foreground font-mono">
         <p>© 2026 ForFH · Fakultas Hukum Universitas Airlangga</p>
       </footer>
     </div>
