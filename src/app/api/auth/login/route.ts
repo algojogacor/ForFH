@@ -25,17 +25,6 @@ export async function POST(req: NextRequest) {
     }
 
     const emailNormalized = String(email).trim().toLowerCase();
-    const ip = req.headers.get("x-forwarded-for") || "anonymous-client";
-    const rateLimitKey = `campus-login:${emailNormalized}:${ip}`;
-
-    const rateLimit = await checkRateLimit(rateLimitKey, {
-      maxAttempts: 20,
-      windowMs: 5 * 60 * 1000,
-      blockDurationMs: 60 * 1000,
-    });
-    if (!rateLimit.allowed) {
-      return NextResponse.json({ error: rateLimit.error }, { status: 429 });
-    }
 
     // 1. Login ke Kampus Kita (verifikasi email+password ke server UNAIR)
     let campusLogin;
