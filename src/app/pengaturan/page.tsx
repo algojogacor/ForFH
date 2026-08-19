@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 import { SyncProgressCard } from "@/components/campus/SyncProgressCard";
 import WhatsAppCard from "@/components/wa/WhatsAppCard";
+import { NotificationLogCard } from "@/components/notifications/NotificationLogCard";
 import { invalidateClientCache } from "@/lib/client-cache";
 
 export default function SettingsPage() {
@@ -362,6 +363,8 @@ export default function SettingsPage() {
           </Card>
 
           <WhatsAppCard />
+
+          <NotificationLogCard />
 
           {/* Web Push Notification Settings */}
           <Card className="border-border-default">
