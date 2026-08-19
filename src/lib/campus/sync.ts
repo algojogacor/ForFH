@@ -14,7 +14,7 @@
 // Token kampus disimpan plaintext apa adanya (nilai tersimpan = nilai asli).
 // Data lama berformat v1: (AES-256-GCM) di-decrypt sekali jalan saat sync.
 // Password tidak pernah tersimpan.
-import { and, eq, lt, or, isNull, ne } from "drizzle-orm";
+import { and, eq, lt, or, isNull, ne, inArray } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { db } from "@/lib/db";
 import {
@@ -272,34 +272,48 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     await setSyncStep(userId, "tugas");
     const now = Date.now();
     let taskCount = 0, newTasks = 0, instructionCount = 0;
-    for (const ev of icsEvents) {
+
+    const taskItems = icsEvents.map((ev) => {
       const t = icsToTask(ev);
-      // DESCRIPTION iCal selalu kosong — isi dari instruksi section summary HE-BAT.
-      // Instruksi TIDAK menimpa description yang sudah ada (edit user di modal):
-      // update path hanya mengisi kalau existing kosong; insert path tugas baru
-      // langsung dapat instruksi.
       const instr = t.description ? null : instructionFor(instructions, t);
-      const existing = t.externalId
-        ? await db.query.tasks.findFirst({ where: and(eq(tasks.userId, userId), eq(tasks.externalId, t.externalId)) })
-        : null;
+      return { t, instr };
+    });
+
+    const externalIds = Array.from(new Set(taskItems.map((item) => item.t.externalId).filter(Boolean)));
+    const existingTasksList = externalIds.length > 0
+      ? await db.select().from(tasks).where(
+          and(eq(tasks.userId, userId), inArray(tasks.externalId, externalIds))
+        )
+      : [];
+    const existingByExternalId = new Map(existingTasksList.map((row) => [row.externalId!, row]));
+
+    const tasksToInsert: (typeof tasks.$inferInsert)[] = [];
+    const updatePromises: Promise<unknown>[] = [];
+    const newNotificationsToDeliver: Array<{ id: string; userId: string; entityId: string; title: string; courseName: string; dueAt: number }> = [];
+
+    for (const item of taskItems) {
+      const { t, instr } = item;
+      const existing = t.externalId ? existingByExternalId.get(t.externalId) : null;
       const description = existing
         ? (existing.description || instr || t.description || null)
         : (instr || t.description || null);
-      // Hitung hanya saat instruksi benar-benar dipakai (existing.description
-      // kosong / tugas baru) — edit user tidak menaikkan counter laporan.
+
       if (instructionCounted(instr, existing?.description)) instructionCount++;
       const courseId = t.courseCode ? courseIdsByCode.get(t.courseCode) : undefined;
+
       if (existing) {
-        await db.update(tasks).set({
-          title: t.title,
-          description,
-          dueAt: t.dueAt ? new Date(t.dueAt) : null,
-          courseId: courseId || existing.courseId,
-          updatedAt: new Date(),
-        }).where(eq(tasks.id, existing.id));
+        updatePromises.push(
+          db.update(tasks).set({
+            title: t.title,
+            description,
+            dueAt: t.dueAt ? new Date(t.dueAt) : null,
+            courseId: courseId || existing.courseId,
+            updatedAt: new Date(),
+          }).where(eq(tasks.id, existing.id))
+        );
       } else {
         const id = crypto.randomUUID();
-        await db.insert(tasks).values({
+        const newTaskRow = {
           id,
           userId,
           courseId: courseId || null,
@@ -312,35 +326,57 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
           progress: 0,
           source: "campus",
           externalId: t.externalId,
-        });
+        };
+        tasksToInsert.push(newTaskRow);
+        if (t.externalId) {
+          existingByExternalId.set(t.externalId, newTaskRow as any);
+        }
         newTasks++;
-        // notifikasi tugas baru: entity_type task, offset 0 = "baru muncul"
+
         if (t.dueAt && t.dueAt > now) {
-          try {
-            const res = await sendPushToUser(userId, {
-              title: `📚 Tugas baru: ${t.title}`,
-              body: t.courseName ? `${t.courseName} — tenggat ${new Date(t.dueAt).toLocaleString("id-ID")}.` : `Tenggat ${new Date(t.dueAt).toLocaleString("id-ID")}.`,
-              data: { url: "/tugas", entityType: "task", entityId: id },
-            });
-            if (res.sentCount > 0) {
-              await db.insert(notificationDeliveries).values({
-                id: crypto.randomUUID(),
-                userId,
-                entityType: "task",
-                entityId: id,
-                occurrenceAt: new Date(t.dueAt),
-                offsetMinutes: 0,
-                channel: "web_push",
-                status: "SENT",
-                sentAt: new Date(),
-              });
-            }
-          } catch (e) {
-            logger.warn(`sync ${userId}: notifikasi tugas baru gagal: ${e}`);
-          }
+          newNotificationsToDeliver.push({
+            id,
+            userId,
+            entityId: id,
+            title: t.title,
+            courseName: t.courseName,
+            dueAt: t.dueAt,
+          });
         }
       }
       taskCount++;
+    }
+
+    if (tasksToInsert.length > 0) {
+      await db.insert(tasks).values(tasksToInsert);
+    }
+    if (updatePromises.length > 0) {
+      await Promise.all(updatePromises);
+    }
+
+    for (const notif of newNotificationsToDeliver) {
+      try {
+        const res = await sendPushToUser(userId, {
+          title: `📚 Tugas baru: ${notif.title}`,
+          body: notif.courseName ? `${notif.courseName} — tenggat ${new Date(notif.dueAt).toLocaleString("id-ID")}.` : `Tenggat ${new Date(notif.dueAt).toLocaleString("id-ID")}.`,
+          data: { url: "/tugas", entityType: "task", entityId: notif.entityId },
+        });
+        if (res.sentCount > 0) {
+          await db.insert(notificationDeliveries).values({
+            id: crypto.randomUUID(),
+            userId,
+            entityType: "task",
+            entityId: notif.entityId,
+            occurrenceAt: new Date(notif.dueAt),
+            offsetMinutes: 0,
+            channel: "web_push",
+            status: "SENT",
+            sentAt: new Date(),
+          });
+        }
+      } catch (e) {
+        logger.warn(`sync ${userId}: notifikasi tugas baru gagal: ${e}`);
+      }
     }
 
     // --- upsert grades dari KHS (externalId = semesterId|kode) --------------------

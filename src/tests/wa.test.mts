@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import * as dbSchema from "../lib/db/schema";
 import { WaSessionStore } from "../lib/wa/session-store";
 import { classifyDisconnect, nextBackoffDelayMs, WaClientManager, waKeepAlive } from "../lib/wa/client-manager";
-import { computeHealth, getHealthIndicators, resetHealthForTests } from "../lib/wa/health";
+import { computeHealth, getHealthIndicators, resetHealthForTests } from "@/lib/wa/health";
 import type { WaHealthIndicators } from "../lib/wa/types";
 import { normalizePhone, maskPhone } from "../lib/wa/normalize";
 import { encryptV1Fixture, TEST_LEGACY_SECRET } from "./v1-fixture";
