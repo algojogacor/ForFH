@@ -255,17 +255,52 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
 
     // --- upsert class_schedules (externalId = kode|hari|mulai|selesai) -----------
     let scheduleCount = 0;
+    const existingSchedules = await db
+      .select({ id: classSchedules.id, externalId: classSchedules.externalId })
+      .from(classSchedules)
+      .where(eq(classSchedules.userId, userId));
+    const existingScheduleMap = new Map<string, string>();
+    for (const row of existingSchedules) {
+      if (row.externalId) {
+        existingScheduleMap.set(row.externalId, row.id);
+      }
+    }
+
+    const schedulesToInsert: (typeof classSchedules.$inferInsert)[] = [];
+    const scheduleUpdatePromises: Promise<unknown>[] = [];
+
     for (const s of schedules) {
       const courseId = courseIdsByCode.get(s.courseCode || s.courseName);
       if (!courseId || s.dayOfWeek === null || !s.startTime || !s.endTime) continue;
-      await upsertByExternal(classSchedules, userId, s.externalId, {
+      const values = {
         courseId,
         dayOfWeek: s.dayOfWeek,
         startTime: s.startTime,
         endTime: s.endTime,
         room: s.room || null,
-      });
+        updatedAt: new Date(),
+      };
+      const existingId = existingScheduleMap.get(s.externalId);
+      if (existingId) {
+        scheduleUpdatePromises.push(
+          db.update(classSchedules).set(values).where(eq(classSchedules.id, existingId))
+        );
+      } else {
+        schedulesToInsert.push({
+          id: crypto.randomUUID(),
+          userId,
+          externalId: s.externalId,
+          ...values,
+        });
+      }
       scheduleCount++;
+    }
+
+    if (schedulesToInsert.length > 0) {
+      await db.insert(classSchedules).values(schedulesToInsert);
+    }
+    if (scheduleUpdatePromises.length > 0) {
+      await Promise.all(scheduleUpdatePromises);
     }
 
     // --- upsert tasks dari iCal HE-BAT (externalId = UID event) ------------------
