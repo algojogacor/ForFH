@@ -61,7 +61,8 @@ async function kkFetch(path: string, opts: { method: string; token?: string; par
   }
   try {
     const r = await fetch(url.toString(), { method: opts.method, headers, body, signal: controller.signal, redirect: "manual" });
-    return { status: r.status, text: await r.text(), setCookie: r.headers.get("set-cookie") || "" };
+    const setCookie = (r.headers as any).getSetCookie?.()?.join("; ") || r.headers.get("set-cookie") || "";
+    return { status: r.status, text: await r.text(), setCookie };
   } catch (e: any) {
     if (e?.name === "AbortError") throw new KampusKitaError(0, "Server UNAIR tidak merespons (timeout).");
     throw new KampusKitaError(0, "Gagal menghubungi server UNAIR: " + (e?.message || "jaringan"));
@@ -79,18 +80,34 @@ export async function loginCampus(email: string, password: string): Promise<Camp
     method: "POST",
     body: { email, password },
   });
+
+  let jwt = "";
   const m = setCookie.match(/token=([^;]+)/);
-  const jwt = m ? m[1] : "";
-  if (jwt) {
-    const payload = decodeJwt(jwt);
-    return { jwt, payload, nim: payload.username || "" };
+  if (m && m[1]) {
+    jwt = m[1];
   }
-  let msg = "Login kampus gagal (HTTP " + status + ").";
+
+  let bodyJson: any = null;
   try {
-    const j = JSON.parse(text);
-    if (j && j.message) msg = String(j.message);
+    bodyJson = JSON.parse(text);
   } catch {
     /* body bukan json */
+  }
+
+  // Ekstrak token dari response body jika runtime Next.js/Node fetch tidak mengekspos Set-Cookie
+  if (!jwt && bodyJson?.token) {
+    jwt = String(bodyJson.token);
+  }
+
+  if (jwt) {
+    const payload = decodeJwt(jwt);
+    const nim = payload.username || bodyJson?.data?.mahasiswa?.NIM_MHS || bodyJson?.data?.username || "";
+    return { jwt, payload, nim };
+  }
+
+  let msg = "Login kampus gagal (HTTP " + status + ").";
+  if (bodyJson && bodyJson.message) {
+    msg = String(bodyJson.message);
   }
   // 401/404/422 semuanya dikembalikan sebagai 401 generik:
   // 404 ("username is not exist") tidak boleh membocorkan keberadaan email.
