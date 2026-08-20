@@ -331,6 +331,14 @@ export function startInternalReminderLoop(): void {
   if (reminderLoopTimer) return;
   reminderLoopTimer = setInterval(async () => {
     try {
+      // 1. Keepalive aktif WhatsApp: memantau socket & auto-reconnect jika koneksi idle/drop
+      const { getWaClientManager, waKeepAlive } = await import("../wa/client-manager");
+      await waKeepAlive(getWaClientManager());
+    } catch (err) {
+      logger.warn("internal wa keepalive error:", err);
+    }
+    try {
+      // 2. Proses notifikasi kuliah & tugas yang jatuh tempo
       await processDueReminders();
     } catch (err) {
       logger.warn("internal reminder loop error:", err);

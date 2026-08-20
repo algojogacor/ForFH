@@ -124,7 +124,11 @@ export class WaClientManager {
           markOnlineOnConnect: true, // spec §1 — konfigurasi socket yang dipakai
           syncFullHistory: false,
           shouldIgnoreJid: (jid) => isIgnoredJid(jid),
-          // keepAliveIntervalMs (30s) & connectTimeoutMs (20s): default Baileys
+          keepAliveIntervalMs: 15_000, // 15 detik: mencegah timeout idle proxy/gateway cloud (Koyeb)
+          connectTimeoutMs: 60_000, // 60 detik: toleransi handshake tinggi saat jaringan berfluktuasi
+          defaultQueryTimeoutMs: 60_000,
+          browser: ["ForFH Assistant", "Chrome", "131.0.0.0"],
+          retryRequestDelayMs: 500,
         });
       },
       loadAuth: () => defaultStore.loadAuthState(),
