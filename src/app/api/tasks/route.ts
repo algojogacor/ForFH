@@ -111,9 +111,10 @@ export async function POST(req: NextRequest) {
   // If initial subtasks provided (e.g. from AI Quick Capture / Breakdown)
   if (Array.isArray(initialSubtasks) && initialSubtasks.length > 0) {
     let order = 1;
+    const subtaskValues = [];
     for (const sub of initialSubtasks) {
       if (sub && sub.title) {
-        await db.insert(subtasks).values({
+        subtaskValues.push({
           id: crypto.randomUUID(),
           userId: user.id,
           taskId,
@@ -125,6 +126,10 @@ export async function POST(req: NextRequest) {
           updatedAt: now,
         });
       }
+    }
+
+    if (subtaskValues.length > 0) {
+      await db.insert(subtasks).values(subtaskValues);
     }
   }
 
