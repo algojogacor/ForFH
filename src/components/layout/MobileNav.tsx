@@ -14,12 +14,15 @@ import { cn } from "@/lib/utils";
 
 export function MobileNav({
   onOpenQuickCapture,
+  onOpenMenu,
   onOpenCommandMenu,
 }: {
   onOpenQuickCapture: () => void;
-  onOpenCommandMenu: () => void;
+  onOpenMenu?: () => void;
+  onOpenCommandMenu?: () => void;
 }) {
   const pathname = usePathname();
+  const handleMenuClick = onOpenMenu ?? onOpenCommandMenu ?? (() => {});
 
   return (
     <nav
@@ -85,12 +88,12 @@ export function MobileNav({
         {pathname.startsWith("/tugas") && <span className="absolute bottom-0.5 h-1 w-1 rounded-full bg-primary" />}
       </Link>
 
-      {/* 5. Menu / Search */}
+      {/* 5. Menu Drawer Trigger */}
       <button
-        onClick={onOpenCommandMenu}
-        className="flex flex-col items-center justify-center min-h-[44px] min-w-[48px] rounded text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors flex-1"
-        title="Menu & Perintah"
-        aria-label="Menu dan Perintah"
+        onClick={handleMenuClick}
+        className="flex flex-col items-center justify-center min-h-[44px] min-w-[48px] rounded text-[11px] font-medium text-muted-foreground hover:text-foreground active:scale-95 transition-all flex-1"
+        title="Buka Menu Lengkap"
+        aria-label="Buka menu lengkap"
       >
         <Menu className="h-4 w-4 mb-0.5" />
         <span>Menu</span>

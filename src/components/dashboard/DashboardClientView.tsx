@@ -63,19 +63,19 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
   return (
     <div className="space-y-7 animate-entrance">
       {/* 1. Paper & Ink Editorial Hero Greeting */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-4 border-b border-border-default">
-        <div className="space-y-1">
-          <p className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-4 pb-4 border-b border-border-default">
+        <div className="space-y-0.5 sm:space-y-1">
+          <p className="text-[11px] font-mono tracking-widest text-muted-foreground uppercase">
             {dateString}
           </p>
-          <h1 className="font-editorial italic text-2xl sm:text-4xl text-foreground font-normal tracking-tight">
+          <h1 className="font-editorial italic text-2xl sm:text-4xl text-foreground font-normal tracking-tight leading-tight">
             {greeting}
           </h1>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="text-right hidden sm:block">
-            <span className="text-xs text-muted-foreground block font-mono">
+        <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-1 sm:pt-0">
+          <div className="text-left sm:text-right">
+            <span className="text-[10px] text-muted-foreground block font-mono uppercase tracking-wider">
               Progres Semester
             </span>
             <span className="text-xs font-semibold text-foreground font-mono">
@@ -84,7 +84,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
           </div>
           <Link
             href="/tugas"
-            className="inline-flex items-center gap-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 px-3.5 py-2 rounded-md shadow-xs transition-all select-none"
+            className="inline-flex items-center justify-center gap-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 px-3.5 min-h-[40px] rounded-md shadow-xs transition-all select-none"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>Tambah Tugas</span>
@@ -94,9 +94,9 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
 
       {/* 2. Next Class Highlight Banner (Editorial Left Accent Line) */}
       {nextClass && (
-        <div className="p-4 sm:p-5 rounded-lg bg-surface-1 border border-border-default border-l-4 border-l-primary flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+        <div className="p-3.5 sm:p-5 rounded-lg bg-surface-1 border border-border-default border-l-4 border-l-primary flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shadow-xs">
           <div className="space-y-1 min-w-0">
-            <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground uppercase tracking-wide">
+            <div className="flex items-center gap-2 text-[10px] font-mono font-medium text-muted-foreground uppercase tracking-wider">
               <span className="font-semibold text-primary">KULIAH BERIKUTNYA</span>
               <span>·</span>
               <span className="text-foreground font-medium">{nextClass.timeRemaining}</span>
@@ -104,7 +104,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
             <div className="font-semibold text-foreground text-base sm:text-lg truncate">
               {nextClass.courseName}
             </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-muted-foreground">
               <span className="font-mono text-foreground font-medium">
                 {nextClass.startTime} – {nextClass.endTime}
               </span>
@@ -113,13 +113,13 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 pt-1 sm:pt-0">
             {nextClass.onlineUrl && (
               <a
                 href={nextClass.onlineUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-medium bg-secondary text-foreground hover:bg-surface-3 px-3 py-1.5 rounded-md border border-border-default transition-colors"
+                className="inline-flex items-center gap-1.5 text-xs font-medium bg-secondary text-foreground hover:bg-surface-3 px-3 py-1.5 rounded-md border border-border-default transition-colors min-h-[36px]"
               >
                 <ExternalLink className="h-3.5 w-3.5 text-primary" />
                 <span>Kuliah Online</span>
@@ -127,7 +127,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
             )}
             <Link
               href={`/mata-kuliah/${nextClass.courseId}`}
-              className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground px-2.5 py-1.5 transition-colors"
+              className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground px-2.5 py-1.5 transition-colors min-h-[36px]"
             >
               <span>Course Hub</span>
               <ArrowRight className="h-3.5 w-3.5" />
@@ -143,7 +143,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
           {/* Active Tasks / Deadlines */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              <h2 className="text-[11px] font-mono font-medium uppercase tracking-wider text-muted-foreground">
                 Tenggat Waktu & Prioritas ({tasks.length})
               </h2>
               <Link
@@ -226,7 +226,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
           {upcomingExams.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                <h2 className="text-[11px] font-mono font-medium uppercase tracking-wider text-muted-foreground">
                   Agenda Evaluasi & Ujian
                 </h2>
                 <Link
@@ -267,7 +267,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
           {/* Today Timeline */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              <h2 className="text-[11px] font-mono font-medium uppercase tracking-wider text-muted-foreground">
                 Jadwal Hari Ini ({todaySchedules.length})
               </h2>
               <Link href="/kalender" className="text-xs font-medium text-primary hover:underline transition-colors">
@@ -307,7 +307,7 @@ export function DashboardClientView({ initialData }: DashboardClientViewProps) {
           {/* Progress Summary Card */}
           <div className="p-5 rounded-lg border border-border-default bg-surface-1 space-y-3 text-xs shadow-xs">
             <div className="flex items-center justify-between">
-              <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+              <span className="font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 Kemajuan Semester
               </span>
               <span className="font-mono text-foreground font-bold">{progress.percent}%</span>

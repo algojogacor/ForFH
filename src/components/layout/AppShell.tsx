@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { MobileNav } from "./MobileNav";
+import { MobileMenuDrawer } from "./MobileMenuDrawer";
 import { CommandMenu } from "./CommandMenu";
 import { QuickCaptureModal } from "../quick-capture/QuickCaptureModal";
 import { initAutoSyncListener } from "@/lib/offline/outbox";
@@ -17,6 +18,7 @@ export function AppShell({
 }) {
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     // 1. Register Service Worker for PWA and Push
@@ -57,7 +59,7 @@ export function AppShell({
           onOpenCommandMenu={() => setCommandMenuOpen(true)}
           onOpenQuickCapture={() => setQuickCaptureOpen(true)}
         />
-        <main className="flex-1 p-3 sm:p-5 md:p-6 w-full mx-auto">
+        <main className="flex-1 px-4 py-4 sm:p-5 md:p-6 w-full mx-auto">
           {children}
         </main>
       </div>
@@ -65,7 +67,15 @@ export function AppShell({
       {/* Mobile Bottom Navigation */}
       <MobileNav
         onOpenQuickCapture={() => setQuickCaptureOpen(true)}
+        onOpenMenu={() => setMobileMenuOpen(true)}
         onOpenCommandMenu={() => setCommandMenuOpen(true)}
+      />
+
+      {/* Mobile Navigation Drawer */}
+      <MobileMenuDrawer
+        open={mobileMenuOpen}
+        onOpenChange={setMobileMenuOpen}
+        user={user}
       />
 
       {/* Quick Capture Floating Dialog */}

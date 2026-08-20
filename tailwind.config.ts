@@ -119,11 +119,16 @@ const config: Config = {
           from: { opacity: "0", transform: "translateY(-4px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        "slide-up": {
+          from: { opacity: "0", transform: "translateY(16px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
       },
       animation: {
         entrance: "entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
         "fade-in": "fade-in 0.15s ease-out",
         "slide-down": "slide-down 0.15s ease-out",
+        "slide-up": "slide-up 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
       },
     },
   },
