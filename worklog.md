@@ -1,5 +1,21 @@
 # Worklog — ForFH Web Companion
 
+## [2026-08-20] Audit, Merge & Konsolidasi Batching 5 Pull Request (GitHub)
+- **Aktivitas & Audit 5 PR**:
+  1. **PR #7 (`fix(security): safely extract client IP for rate limiting`)**: Mengamankan ekstraksi client IP di `src/lib/auth/ip.ts` dengan memprioritaskan `cf-connecting-ip` (Cloudflare) -> `x-real-ip` -> `x-forwarded-for[0]` -> `anonymous-client`. Berhasil di-merge langsung ke `master`.
+  2. **PR #8 (`[performance] replace N+1 subtask insert loop with bulk insert`)**: Mengganti loop sequential insert subtasks di `POST /api/tasks` dengan single multi-row `db.insert(subtasks).values(subtaskValues)`. Berhasil di-merge langsung ke `master`.
+  3. **PR #6, #9, #10 (Batching Jadwal, Mata Kuliah, dan Tugas iCal)**:
+     - Ditemukan masalah polusi lockfile (`pnpm-lock.yaml` 6.000+ baris) dan potensi merge conflict dengan arsitektur Tiered Syncing pada branch PR Jules.
+     - Seluruh logika optimasi batching (pre-fetch map lookup, single batch query `inArray`, batch insert `db.insert`, concurrent `Promise.all` update) diintegrasikan secara bersih dan rapi ke dalam `src/lib/campus/sync.ts` di master tanpa membawa file `pnpm-lock.yaml`.
+     - PR #6, #9, dan #10 ditutup (*closed*) dengan catatan penjelasan di GitHub.
+- **Status Verifikasi**:
+  - `npm run typecheck`: 0 error.
+  - `npm run lint`: 0 warning, 0 error.
+  - `npm run test`: **379 PASSED, 0 FAILED** (seluruh unit test bertambah dan 100% hijau).
+  - `npm run build`: 66/66 route Next.js ter-compile sukses.
+
+---
+
 ## [2026-08-20] Implementasi Tiered Syncing & Cache Tuning (Kampus Kita & HE-BAT)
 - **Latar Belakang & Masalah**: Instance Koyeb Free Tier (0.1 vCPU) terbebani oleh cron seragam 30 menit yang mengeksekusi 19 HTTP request per user per siklus ke server UNAIR (14 endpoint Kampus Kita + KHS multi-semester + HE-BAT feed), meskipun data jadwal kuliah, riwayat KHS lama, kalender akademik, dan info mahasiswa nyaris tidak pernah berubah.
 - **Implementasi**:

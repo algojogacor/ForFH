@@ -14,7 +14,7 @@
 // Token kampus disimpan plaintext apa adanya (nilai tersimpan = nilai asli).
 // Data lama berformat v1: (AES-256-GCM) di-decrypt sekali jalan saat sync.
 // Password tidak pernah tersimpan.
-import { and, eq, lt, or, isNull, ne, desc } from "drizzle-orm";
+import { and, eq, lt, or, isNull, ne, desc, inArray } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { db } from "@/lib/db";
 import {
@@ -316,32 +316,107 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     if (shouldFetchJadwal && jadwalRows.length > 0) {
       await setSyncStep(userId, "kursus");
       const schedules = jadwalToSchedules(jadwalRows);
+
+      // 1. Batch upsert courses
+      const uniqueCoursesMap = new Map<string, typeof schedules[0]>();
       for (const s of schedules) {
         const ext = s.courseCode || s.courseName;
-        if (!ext) continue;
-        const course = await upsertByExternal(courses, userId, ext, {
+        if (ext && !uniqueCoursesMap.has(ext)) {
+          uniqueCoursesMap.set(ext, s);
+        }
+      }
+
+      const existingCoursesList = await db.select().from(courses).where(eq(courses.userId, userId));
+      const existingCourseByExt = new Map(existingCoursesList.map((c) => [c.externalId, c]));
+
+      const newCoursesToInsert: (typeof courses.$inferInsert)[] = [];
+      const courseUpdatePromises: Promise<unknown>[] = [];
+
+      for (const [ext, s] of uniqueCoursesMap.entries()) {
+        const existing = existingCourseByExt.get(ext);
+        const courseValues = {
           name: s.courseName || s.courseCode,
           code: s.courseCode || null,
           lecturer: s.lecturer || null,
           credits: s.credits,
           defaultRoom: s.room || null,
-        });
-        if (s.courseCode) courseIdsByCode.set(s.courseCode, course.id);
-        if (!courseIdsByCode.has(ext)) courseIdsByCode.set(ext, course.id);
-        courseCount++;
+          updatedAt: new Date(),
+        };
+
+        if (existing) {
+          courseIdsByCode.set(ext, existing.id);
+          if (s.courseCode) courseIdsByCode.set(s.courseCode, existing.id);
+          courseUpdatePromises.push(
+            db.update(courses).set(courseValues).where(eq(courses.id, existing.id))
+          );
+        } else {
+          const newId = crypto.randomUUID();
+          courseIdsByCode.set(ext, newId);
+          if (s.courseCode) courseIdsByCode.set(s.courseCode, newId);
+          newCoursesToInsert.push({
+            id: newId,
+            userId,
+            externalId: ext,
+            ...courseValues,
+          });
+        }
       }
+
+      if (newCoursesToInsert.length > 0) {
+        await db.insert(courses).values(newCoursesToInsert);
+      }
+      if (courseUpdatePromises.length > 0) {
+        await Promise.all(courseUpdatePromises);
+      }
+      courseCount = uniqueCoursesMap.size;
+
+      // 2. Batch upsert class_schedules
+      const existingSchedules = await db
+        .select({ id: classSchedules.id, externalId: classSchedules.externalId })
+        .from(classSchedules)
+        .where(eq(classSchedules.userId, userId));
+      const existingScheduleMap = new Map<string, string>();
+      for (const row of existingSchedules) {
+        if (row.externalId) {
+          existingScheduleMap.set(row.externalId, row.id);
+        }
+      }
+
+      const schedulesToInsert: (typeof classSchedules.$inferInsert)[] = [];
+      const scheduleUpdatePromises: Promise<unknown>[] = [];
 
       for (const s of schedules) {
         const courseId = courseIdsByCode.get(s.courseCode || s.courseName);
         if (!courseId || s.dayOfWeek === null || !s.startTime || !s.endTime) continue;
-        await upsertByExternal(classSchedules, userId, s.externalId, {
+        const values = {
           courseId,
           dayOfWeek: s.dayOfWeek,
           startTime: s.startTime,
           endTime: s.endTime,
           room: s.room || null,
-        });
+          updatedAt: new Date(),
+        };
+        const existingId = existingScheduleMap.get(s.externalId);
+        if (existingId) {
+          scheduleUpdatePromises.push(
+            db.update(classSchedules).set(values).where(eq(classSchedules.id, existingId))
+          );
+        } else {
+          schedulesToInsert.push({
+            id: crypto.randomUUID(),
+            userId,
+            externalId: s.externalId,
+            ...values,
+          });
+        }
         scheduleCount++;
+      }
+
+      if (schedulesToInsert.length > 0) {
+        await db.insert(classSchedules).values(schedulesToInsert);
+      }
+      if (scheduleUpdatePromises.length > 0) {
+        await Promise.all(scheduleUpdatePromises);
       }
     }
 
@@ -349,34 +424,53 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
     await setSyncStep(userId, "tugas");
     const now = Date.now();
     let taskCount = 0, newTasks = 0, instructionCount = 0;
-    for (const ev of icsEvents) {
+
+    const taskItems = icsEvents.map((ev) => {
       const t = icsToTask(ev);
-      // DESCRIPTION iCal selalu kosong — isi dari instruksi section summary HE-BAT.
-      // Instruksi TIDAK menimpa description yang sudah ada (edit user di modal):
-      // update path hanya mengisi kalau existing kosong; insert path tugas baru
-      // langsung dapat instruksi.
       const instr = t.description ? null : instructionFor(instructions, t);
-      const existing = t.externalId
-        ? await db.query.tasks.findFirst({ where: and(eq(tasks.userId, userId), eq(tasks.externalId, t.externalId)) })
-        : null;
+      return { ev, t, instr };
+    });
+
+    const taskExternalIds = Array.from(
+      new Set(taskItems.map((item) => item.t.externalId).filter((id): id is string => Boolean(id)))
+    );
+
+    const existingTasksList = taskExternalIds.length > 0
+      ? await db.select().from(tasks).where(
+          and(eq(tasks.userId, userId), inArray(tasks.externalId, taskExternalIds))
+        )
+      : [];
+
+    const existingTaskMap = new Map(existingTasksList.map((r) => [r.externalId, r]));
+
+    const tasksToInsert: (typeof tasks.$inferInsert)[] = [];
+    const taskUpdatePromises: Promise<unknown>[] = [];
+    const newTasksForNotification: { id: string; title: string; courseName?: string; dueAt: number }[] = [];
+
+    for (const item of taskItems) {
+      const { t, instr } = item;
+      const existing = t.externalId ? existingTaskMap.get(t.externalId) : null;
       const description = existing
         ? (existing.description || instr || t.description || null)
         : (instr || t.description || null);
-      // Hitung hanya saat instruksi benar-benar dipakai (existing.description
-      // kosong / tugas baru) — edit user tidak menaikkan counter laporan.
+
       if (instructionCounted(instr, existing?.description)) instructionCount++;
+
       const courseId = t.courseCode ? courseIdsByCode.get(t.courseCode) : undefined;
+
       if (existing) {
-        await db.update(tasks).set({
-          title: t.title,
-          description,
-          dueAt: t.dueAt ? new Date(t.dueAt) : null,
-          courseId: courseId || existing.courseId,
-          updatedAt: new Date(),
-        }).where(eq(tasks.id, existing.id));
+        taskUpdatePromises.push(
+          db.update(tasks).set({
+            title: t.title,
+            description,
+            dueAt: t.dueAt ? new Date(t.dueAt) : null,
+            courseId: courseId || existing.courseId,
+            updatedAt: new Date(),
+          }).where(eq(tasks.id, existing.id))
+        );
       } else {
         const id = crypto.randomUUID();
-        await db.insert(tasks).values({
+        const newTaskRow: typeof tasks.$inferInsert = {
           id,
           userId,
           courseId: courseId || null,
@@ -389,35 +483,56 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
           progress: 0,
           source: "campus",
           externalId: t.externalId,
-        });
+        };
+        tasksToInsert.push(newTaskRow);
+        if (t.externalId) {
+          existingTaskMap.set(t.externalId, newTaskRow as any);
+        }
         newTasks++;
-        // notifikasi tugas baru: entity_type task, offset 0 = "baru muncul"
+
         if (t.dueAt && t.dueAt > now) {
-          try {
-            const res = await sendPushToUser(userId, {
-              title: `📚 Tugas baru: ${t.title}`,
-              body: t.courseName ? `${t.courseName} — tenggat ${new Date(t.dueAt).toLocaleString("id-ID")}.` : `Tenggat ${new Date(t.dueAt).toLocaleString("id-ID")}.`,
-              data: { url: "/tugas", entityType: "task", entityId: id },
-            });
-            if (res.sentCount > 0) {
-              await db.insert(notificationDeliveries).values({
-                id: crypto.randomUUID(),
-                userId,
-                entityType: "task",
-                entityId: id,
-                occurrenceAt: new Date(t.dueAt),
-                offsetMinutes: 0,
-                channel: "web_push",
-                status: "SENT",
-                sentAt: new Date(),
-              });
-            }
-          } catch (e) {
-            logger.warn(`sync ${userId}: notifikasi tugas baru gagal: ${e}`);
-          }
+          newTasksForNotification.push({
+            id,
+            title: t.title,
+            courseName: t.courseName,
+            dueAt: t.dueAt,
+          });
         }
       }
       taskCount++;
+    }
+
+    if (tasksToInsert.length > 0) {
+      await db.insert(tasks).values(tasksToInsert);
+    }
+    if (taskUpdatePromises.length > 0) {
+      await Promise.all(taskUpdatePromises);
+    }
+
+    // Kirim notifikasi push untuk tugas-tugas baru
+    for (const n of newTasksForNotification) {
+      try {
+        const res = await sendPushToUser(userId, {
+          title: `📚 Tugas baru: ${n.title}`,
+          body: n.courseName ? `${n.courseName} — tenggat ${new Date(n.dueAt).toLocaleString("id-ID")}.` : `Tenggat ${new Date(n.dueAt).toLocaleString("id-ID")}.`,
+          data: { url: "/tugas", entityType: "task", entityId: n.id },
+        });
+        if (res.sentCount > 0) {
+          await db.insert(notificationDeliveries).values({
+            id: crypto.randomUUID(),
+            userId,
+            entityType: "task",
+            entityId: n.id,
+            occurrenceAt: new Date(n.dueAt),
+            offsetMinutes: 0,
+            channel: "web_push",
+            status: "SENT",
+            sentAt: new Date(),
+          });
+        }
+      } catch (e) {
+        logger.warn(`sync ${userId}: notifikasi tugas baru gagal: ${e}`);
+      }
     }
 
     // --- upsert grades dari KHS jika shouldFetchKhs ----------------------------
