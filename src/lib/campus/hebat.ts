@@ -158,18 +158,40 @@ export async function fetchIcs(userid: string, authtoken: string): Promise<strin
   const start = Math.floor(Date.now() / 1000) - 90 * 86400;
   const end = start + 490 * 86400;
   const u = `${BASE}/calendar/export_execute.php?userid=${encodeURIComponent(userid)}&authtoken=${encodeURIComponent(authtoken)}&preset_what=all&preset_time=custom&starttime=${start}&endtime=${end}`;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const r = await fetch(u, { headers: { "User-Agent": UA }, signal: controller.signal });
-    if (!r.ok) throw new HebatError(r.status, "Feed HE-BAT: HTTP " + r.status + " (authtoken tidak valid? hubungkan ulang di Pengaturan).");
-    return await r.text();
-  } catch (e: any) {
-    if (e instanceof HebatError) throw e;
-    throw new HebatError(0, "Gagal mengambil kalender HE-BAT: " + (e?.message || "jaringan"));
-  } finally {
-    clearTimeout(timeoutId);
+
+  let lastErr: any = null;
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    if (attempt > 0) {
+      const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 250, 4000);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const r = await fetch(u, { headers: { "User-Agent": UA }, signal: controller.signal });
+      if (!r.ok) {
+        if ((r.status === 502 || r.status === 503 || r.status === 504) && attempt < 2) {
+          lastErr = new HebatError(r.status, "Feed HE-BAT: HTTP " + r.status);
+          continue;
+        }
+        throw new HebatError(r.status, "Feed HE-BAT: HTTP " + r.status + " (authtoken tidak valid? hubungkan ulang di Pengaturan).");
+      }
+      return await r.text();
+    } catch (e: any) {
+      if (e instanceof HebatError && e.status !== 502 && e.status !== 503 && e.status !== 504 && e.status !== 0) {
+        throw e;
+      }
+      lastErr = e;
+      if (attempt < 2) continue;
+      if (e instanceof HebatError) throw e;
+      if (e?.name === "AbortError") throw new HebatError(0, "HE-BAT tidak merespons (timeout).");
+      throw new HebatError(0, "Gagal mengambil kalender HE-BAT: " + (e?.message || "jaringan"));
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
+  if (lastErr instanceof HebatError) throw lastErr;
+  throw new HebatError(0, "Gagal mengambil kalender HE-BAT: " + (lastErr?.message || "jaringan"));
 }
 
 export interface IcsEvent {

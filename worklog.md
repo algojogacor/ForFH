@@ -1,5 +1,42 @@
 # Worklog — ForFH Web Companion
 
+## [2026-08-20] Implementasi Tiered Syncing & Cache Tuning (Kampus Kita & HE-BAT)
+- **Latar Belakang & Masalah**: Instance Koyeb Free Tier (0.1 vCPU) terbebani oleh cron seragam 30 menit yang mengeksekusi 19 HTTP request per user per siklus ke server UNAIR (14 endpoint Kampus Kita + KHS multi-semester + HE-BAT feed), meskipun data jadwal kuliah, riwayat KHS lama, kalender akademik, dan info mahasiswa nyaris tidak pernah berubah.
+- **Implementasi**:
+  1. **Tiered Syncing Engine (`src/lib/campus/sync.ts`)**:
+     - **Tier 1 (Dinamis - 30 Menit)**: Feed tugas iCal HE-BAT (`fetchIcs`) & Rekap Presensi (`client.presensi()`) — selalu dieksekusi tiap siklus cron 30 menit.
+     - **Tier 2 (Statis Harian - 24 Jam)**: 9 kategori `campus_data` (`kalender_akademik`, `status_mhs`, `dosen_wali`, `masa_studi`, `sks_aktif`, `pembayaran`, `hist_her`, `penyerahan_ktm`, `peserta_mk`) + KHS semester aktif — hanya di-fetch jika `updatedAt` > 24 jam yang lalu atau saat force manual.
+     - **Tier 3 (Semesteran - On-demand / Initial Login)**: Jadwal kuliah (`client.jadwal()`) dan riwayat KHS semester lama (maks 6 semester) — dilewati sepenuhnya saat cron rutin jika sudah ada data tersimpan di DB, hanya dieksekusi saat initial login bootstrap atau tombol "Sync sekarang" manual.
+     - **Course Mapping Resilience**: Muat `existingCourses` dari DB ke `courseIdsByCode` map agar relasi tugas iCal & KHS ke `courseId` tetap terjaga saat jadwal di-skip di cron.
+  2. **Exponential Backoff & Network Resilience**:
+     - Ditambahkan retry loop dengan exponential backoff dan jitter acak (1s, 2s + random 0–250ms, maks 2 retries) pada `kkFetch` (`src/lib/campus/kampuskita.ts`) dan `fetchIcs` (`src/lib/campus/hebat.ts`) untuk menangani transient error (502, 503, 504, network timeout) dari server UNAIR tanpa membebani CPU instance Koyeb.
+  3. **Cache Tuning (Server & Client Layer)**:
+     - Server memory cache (`/api/campus/info`): TTL dinaikkan dari 60 detik menjadi 1 jam (`3_600_000` ms) dengan auto-invalidation (`memDel`) saat sync selesai.
+     - Client cache (`client-cache.ts`): Menambahkan tier-aware TTL resolution (1 jam untuk info kampus, 10 menit untuk jadwal/courses/ujian, 30–60 detik untuk tugas dan presensi).
+  4. **Login Bootstrap & Settings Manual Sync**:
+     - `bootstrapCampus` di `src/app/api/auth/login/route.ts` dan tombol sync manual di `/api/campus/sync` menggunakan parameter `force: true` sehingga seluruh tier 1, 2, dan 3 tetap dapat diperbarui on-demand.
+- **Dampak Pengurangan Request & Compute**:
+  - **Sebelum Tiering**: 19 request / user / 30 menit = **912 request / user / hari**.
+  - **Setelah Tiering (Cron Rutin 30m)**: 2 request / user / 30 menit (pengurangan **~89.5% request** per siklus cron).
+  - **Total 24 Jam**: 48 siklus × 2 req (Tier 1) + 1 × 11 req (Tier 2) = **107 request / user / hari** (pengurangan **~88.3% request total harian**).
+  - Beban komputasi JSON parsing, crypto readToken, dan DB query per siklus cron turun drastis di instance 0.1 vCPU Koyeb.
+- **Status Verifikasi**:
+  - `npm run quality` (ESLint + TypeScript typecheck + 369 unit test): 100% lulus, 0 failure.
+  - `npm run build`: 66/66 route Next.js ter-compile sukses.
+
+---
+
+## [2026-08-20] Audit Caching & Integrasi Data Eksternal Kampus Kita & HE-BAT
+- **Aktivitas**: Audit menyeluruh (investigasi murni tanpa perubahan kode) terhadap seluruh titik fetch data eksternal ke API Kampus Kita dan platform HE-BAT Moodle UNAIR.
+- **Hasil & Temuan Audit**:
+  - Telah dipetakan **14 endpoint API Kampus Kita** dan **3 alur integrasi HE-BAT Moodle** berserta handler dan tabel database tujuannya.
+  - Diverifikasi arsitektur caching 3-lapis: Database persistence (Turso LibSQL SQLite), Server in-memory TTL cache (`mem-cache.ts` TTL 30–60s), dan Client-side in-memory cache (`client-cache.ts` TTL 60s).
+  - Dikonfirmasi bahwa timestamp *"sinkron [tanggal]"* di antarmuka UI adalah timestamp riil dari rekaman database (`campus_accounts.last_sync_at` dan `campus_data.updated_at`), bukan timestamp on-the-fly tiap request.
+  - Dikonfirmasi pemisahan kepemilikan data: data tugas mandiri dan catatan presensi harian per tanggal adalah data internal ForFH, sedangkan rekap presensi agregat dan tugas HE-BAT tersinkron otomatis dari eksternal.
+- **Lokasi Laporan Lengkap**: [`docs/caching-audit.md`](docs/caching-audit.md).
+
+---
+
 ## [2026-08-20] Mobile Navigation Overhaul & Visual Hierarchy Polish
 
 ### 1. Mobile Menu Drawer Overhaul

@@ -38,6 +38,6 @@ export async function GET() {
   }
 
   const payload = { connected: true, lastSyncAt: acc.lastSyncAt, items };
-  memSet(`campus-info:${session.id}`, payload, 60_000);
+  memSet(`campus-info:${session.id}`, payload, 3_600_000); // 1 jam (Tier 2/3 statis, di-invalidate saat sync selesai)
   return NextResponse.json(payload);
 }

@@ -44,14 +44,18 @@ function decodeJwt(jwt: string): JwtPayload {
   }
 }
 
+const MAX_RETRIES = 2; // total maksimal 3 percobaan
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function kkFetch(path: string, opts: { method: string; token?: string; params?: Record<string, string>; body?: Record<string, string> }): Promise<{ status: number; text: string; setCookie: string }> {
   const url = new URL(BASE + path);
   if (opts.token) {
     url.searchParams.set("token", opts.token);
     for (const [k, v] of Object.entries(opts.params || {})) url.searchParams.set(k, v);
   }
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const headers: Record<string, string> = { "User-Agent": UA };
   if (opts.token) headers.Authorization = "Bearer " + opts.token;
   let body: string | undefined;
@@ -59,16 +63,44 @@ async function kkFetch(path: string, opts: { method: string; token?: string; par
     headers["Content-Type"] = "application/x-www-form-urlencoded";
     body = new URLSearchParams(opts.body).toString();
   }
-  try {
-    const r = await fetch(url.toString(), { method: opts.method, headers, body, signal: controller.signal, redirect: "manual" });
-    const setCookie = (r.headers as any).getSetCookie?.()?.join("; ") || r.headers.get("set-cookie") || "";
-    return { status: r.status, text: await r.text(), setCookie };
-  } catch (e: any) {
-    if (e?.name === "AbortError") throw new KampusKitaError(0, "Server UNAIR tidak merespons (timeout).");
-    throw new KampusKitaError(0, "Gagal menghubungi server UNAIR: " + (e?.message || "jaringan"));
-  } finally {
-    clearTimeout(timeoutId);
+
+  let lastError: any = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff dengan jitter: 1s, 2s (+ 0-250ms random)
+      const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 250, 4000);
+      await delay(backoffMs);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const r = await fetch(url.toString(), { method: opts.method, headers, body, signal: controller.signal, redirect: "manual" });
+      const setCookie = (r.headers as any).getSetCookie?.()?.join("; ") || r.headers.get("set-cookie") || "";
+      const text = await r.text();
+
+      // Retry jika server UNAIR overload / gateway error (502, 503, 504)
+      if ((r.status === 502 || r.status === 503 || r.status === 504) && attempt < MAX_RETRIES) {
+        lastError = new KampusKitaError(r.status, `Kampus Kita: HTTP ${r.status} untuk ${path}`);
+        continue;
+      }
+
+      return { status: r.status, text, setCookie };
+    } catch (e: any) {
+      lastError = e;
+      if (attempt < MAX_RETRIES) {
+        continue;
+      }
+      if (e?.name === "AbortError") throw new KampusKitaError(0, "Server UNAIR tidak merespons (timeout).");
+      throw new KampusKitaError(0, "Gagal menghubungi server UNAIR: " + (e?.message || "jaringan"));
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
+
+  if (lastError instanceof KampusKitaError) throw lastError;
+  if (lastError?.name === "AbortError") throw new KampusKitaError(0, "Server UNAIR tidak merespons (timeout).");
+  throw new KampusKitaError(0, "Gagal menghubungi server UNAIR: " + (lastError?.message || "jaringan"));
 }
 
 // Login dengan email kampus + password -> JWT. Route login ForFH menyimpan

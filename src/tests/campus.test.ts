@@ -445,10 +445,20 @@ export async function runCampusTests(assert: (condition: boolean, name: string) 
   assert(instructionCounted("instruksi", "") === true, "existing.description kosong + instr ada -> dihitung");
   assert(instructionCounted("instruksi", undefined) === true, "tugas baru (tanpa existing) + instr ada -> dihitung");
 
-  console.log("  ── Campus sync (jenis campus_data) ──");
+  console.log("  ── Campus sync (jenis campus_data & tiered sync) ──");
   assert(CAMPUS_DATA_JENIS.length === 11, "11 jenis data kampus terdaftar");
   assert(new Set(CAMPUS_DATA_JENIS).size === 11, "jenis tidak duplikat");
   assert(CAMPUS_DATA_JENIS.includes("presensi") && CAMPUS_DATA_JENIS.includes("pembayaran"), "presensi + pembayaran terdaftar");
   assert(CAMPUS_DATA_JENIS.includes("instruksi_tugas"), "instruksi_tugas terdaftar");
   assert(CAMPUS_DATA_JENIS.includes("status_mhs") && CAMPUS_DATA_JENIS.includes("peserta_mk"), "status_mhs + peserta_mk terdaftar");
+
+  // Tier 1: presensi (selalu dinamis)
+  // Tier 2: pembayaran, dosen_wali, masa_studi, sks_aktif, hist_her, penyerahan_ktm, kalender_akademik, status_mhs, peserta_mk
+  const tier2Categories = [
+    "kalender_akademik", "status_mhs", "dosen_wali", "masa_studi", "sks_aktif",
+    "pembayaran", "hist_her", "penyerahan_ktm", "peserta_mk",
+  ];
+  for (const cat of tier2Categories) {
+    assert(CAMPUS_DATA_JENIS.includes(cat as any), `kategori Tier 2 terdaftar: ${cat}`);
+  }
 }

@@ -14,7 +14,7 @@
 // Token kampus disimpan plaintext apa adanya (nilai tersimpan = nilai asli).
 // Data lama berformat v1: (AES-256-GCM) di-decrypt sekali jalan saat sync.
 // Password tidak pernah tersimpan.
-import { and, eq, lt, or, isNull, ne } from "drizzle-orm";
+import { and, eq, lt, or, isNull, ne, desc } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { db } from "@/lib/db";
 import {
@@ -49,6 +49,7 @@ const SYNC_INTERVAL_MIN = Number(process.env.FORFH_SYNC_INTERVAL_MIN || 30);
 // Sync dianggap stale (proses mati di tengah — redeploy/crash) setelah 10 menit
 const STALE_SYNC_MS = 10 * 60 * 1000;
 const MAX_KHS_SEMESTERS = 6;
+const TIER2_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 jam untuk Tier 2 (statis harian)
 
 export interface CampusSyncSummary {
   skipped: boolean;
@@ -137,8 +138,11 @@ export async function setSyncStep(userId: string, step: string): Promise<void> {
 }
 
 /**
- * Jalankan sinkronisasi untuk satu user. Melempar error jika gagal total;
- * state terakhir (last_sync_status/error/summary) di-update di akhir.
+ * Jalankan sinkronisasi untuk satu user dengan tiered syncing:
+ * - Tier 1 (Dinamis - 30 menit): Feed Tugas iCal HE-BAT & Rekap Presensi.
+ * - Tier 2 (Statis Harian - 24 jam): Kalender akademik, info profil, dosen wali,
+ *   masa studi, SKS, pembayaran, HER, KTM, peserta MK, dan semester KHS aktif.
+ * - Tier 3 (Semesteran - manual-only / login bootstrap): Jadwal kuliah & riwayat KHS lama.
  */
 export async function runCampusSync(userId: string, opts: { force?: boolean } = {}): Promise<CampusSyncSummary> {
   const acc = await findAccount(userId);
@@ -203,72 +207,145 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
 
     const client = new KampusKitaClient(jwt);
 
-    // Rekap presensi + info kampus: semua GET, paralel dengan fetch utama.
-    const campusFetchers: { jenis: CampusDataJenis; fetch: () => Promise<Record<string, unknown>[]> }[] = [
-      { jenis: "presensi", fetch: () => client.presensi() },
-      { jenis: "pembayaran", fetch: () => client.pembayaran() },
-      { jenis: "dosen_wali", fetch: () => client.dosenWali() },
-      { jenis: "masa_studi", fetch: () => client.masaStudi() },
-      { jenis: "sks_aktif", fetch: () => client.sksAktif() },
-      { jenis: "hist_her", fetch: () => client.histHer() },
-      { jenis: "penyerahan_ktm", fetch: () => client.penyerahanKtm() },
-      { jenis: "kalender_akademik", fetch: () => client.kalenderAkademik() },
-      { jenis: "status_mhs", fetch: () => client.status() },
-      { jenis: "peserta_mk", fetch: () => client.pesertaMataKuliah() },
+    // 1. Ambil riwayat update tiap kategori di campus_data untuk evaluasi Tier 2
+    const existingCampusData = await db.select({
+      jenis: campusData.jenis,
+      updatedAt: campusData.updatedAt,
+    }).from(campusData).where(eq(campusData.userId, userId));
+
+    const campusDataUpdatedMap = new Map<string, Date>();
+    for (const r of existingCampusData) {
+      if (r.updatedAt) campusDataUpdatedMap.set(r.jenis, r.updatedAt);
+    }
+
+    // 2. Evaluasi status jadwal kuliah & grades untuk keputusan Tier 2 & Tier 3
+    const [hasExistingSchedules, latestGrade] = await Promise.all([
+      db.select({ id: classSchedules.id })
+        .from(classSchedules)
+        .where(eq(classSchedules.userId, userId))
+        .limit(1)
+        .then((r) => r.length > 0),
+      db.select({ updatedAt: grades.updatedAt })
+        .from(grades)
+        .where(eq(grades.userId, userId))
+        .orderBy(desc(grades.updatedAt))
+        .limit(1)
+        .then((r) => r[0]),
+    ]);
+
+    const nowTime = Date.now();
+
+    // Helper: apakah kategori Tier 2 sudah waktunya di-sync (24 jam atau force atau belum ada data)
+    const isTier2Due = (jenis: CampusDataJenis) => {
+      if (opts.force) return true;
+      const last = campusDataUpdatedMap.get(jenis);
+      if (!last) return true;
+      return (nowTime - last.getTime()) >= TIER2_INTERVAL_MS;
+    };
+
+    // Tier 3: Jadwal kuliah hanya di-fetch saat force manual ATAU initial bootstrap (belum punya jadwal)
+    const shouldFetchJadwal = opts.force || !hasExistingSchedules;
+
+    // Tier 2: Nilai KHS semester aktif di-fetch jika force ATAU belum ada nilai ATAU sudah > 24 jam
+    const shouldFetchKhs = opts.force || !latestGrade?.updatedAt || (nowTime - latestGrade.updatedAt.getTime() >= TIER2_INTERVAL_MS);
+
+    // Muat daftar MK yang sudah ada ke map agar tugas dan nilai tetap terpetakan ke courseId
+    const courseIdsByCode = new Map<string, string>();
+    const existingCourses = await db.select({ id: courses.id, code: courses.code, name: courses.name })
+      .from(courses)
+      .where(eq(courses.userId, userId));
+    for (const c of existingCourses) {
+      if (c.code) courseIdsByCode.set(c.code, c.id);
+      if (c.name && !courseIdsByCode.has(c.name)) courseIdsByCode.set(c.name, c.id);
+    }
+
+    // Rekap presensi (Tier 1) + info kampus (Tier 2)
+    const allCampusFetchers: { jenis: CampusDataJenis; fetch: () => Promise<Record<string, unknown>[]> }[] = [
+      { jenis: "presensi", fetch: () => client.presensi() }, // Tier 1: selalu jalan
+      { jenis: "pembayaran", fetch: () => client.pembayaran() }, // Tier 2
+      { jenis: "dosen_wali", fetch: () => client.dosenWali() }, // Tier 2
+      { jenis: "masa_studi", fetch: () => client.masaStudi() }, // Tier 2
+      { jenis: "sks_aktif", fetch: () => client.sksAktif() }, // Tier 2
+      { jenis: "hist_her", fetch: () => client.histHer() }, // Tier 2
+      { jenis: "penyerahan_ktm", fetch: () => client.penyerahanKtm() }, // Tier 2
+      { jenis: "kalender_akademik", fetch: () => client.kalenderAkademik() }, // Tier 2
+      { jenis: "status_mhs", fetch: () => client.status() }, // Tier 2
+      { jenis: "peserta_mk", fetch: () => client.pesertaMataKuliah() }, // Tier 2
     ];
 
-    // --- fetch paralel ---------------------------------------------------------
-    await setSyncStep(userId, "jadwal");
+    const activeFetchers = allCampusFetchers.filter(({ jenis }) => {
+      if (jenis === "presensi") return true; // Tier 1: selalu jalan
+      return isTier2Due(jenis); // Tier 2: jalan jika > 24 jam atau force
+    });
+
+    // --- fetch paralel tier-aware ---------------------------------------------
+    await setSyncStep(userId, shouldFetchJadwal ? "jadwal" : "tugas");
+
+    const jadwalPromise = shouldFetchJadwal
+      ? client.jadwal().catch((e: any) => {
+          logger.warn(`sync ${userId}: jadwal gagal: ${e?.message || e}`);
+          return [];
+        })
+      : Promise.resolve([]);
+
+    const semPromise = shouldFetchKhs
+      ? client.semesters().catch((e: any) => {
+          logger.warn(`sync ${userId}: semesters KHS gagal: ${e?.message || e}`);
+          return [];
+        })
+      : Promise.resolve([]);
+
+    const icsPromise = hebatToken && hebatUserid
+      ? fetchIcs(hebatUserid, hebatToken).catch((e: any) => {
+          logger.warn(`sync ${userId}: HE-BAT gagal: ${e?.message}`);
+          return "";
+        })
+      : Promise.resolve("");
+
     const [jadwalRows, semRows, icsText] = await Promise.all([
-      client.jadwal(),
-      client.semesters(),
-      hebatToken && hebatUserid
-        ? fetchIcs(hebatUserid, hebatToken).catch((e: any) => {
-            // authtoken kadaluarsa bukan bencana — jadwal/grade tetap jalan
-            logger.warn(`sync ${userId}: HE-BAT gagal: ${e?.message}`);
-            return "";
-          })
-        : Promise.resolve(""),
+      jadwalPromise,
+      semPromise,
+      icsPromise,
     ]);
+
     const icsEvents = icsText ? parseIcs(icsText) : [];
 
-    const schedules = jadwalToSchedules(jadwalRows);
-
-    // --- upsert courses (externalId = kode MK) ----------------------------------
-    await setSyncStep(userId, "kursus");
-    const courseIdsByCode = new Map<string, string>();
+    // --- upsert courses & class_schedules jika jadwal di-fetch -----------------
     let courseCount = 0;
-    for (const s of schedules) {
-      const ext = s.courseCode || s.courseName;
-      if (!ext) continue;
-      const course = await upsertByExternal(courses, userId, ext, {
-        name: s.courseName || s.courseCode,
-        code: s.courseCode || null,
-        lecturer: s.lecturer || null,
-        credits: s.credits,
-        defaultRoom: s.room || null,
-      });
-      if (s.courseCode) courseIdsByCode.set(s.courseCode, course.id);
-      if (!courseIdsByCode.has(ext)) courseIdsByCode.set(ext, course.id);
-      courseCount++;
-    }
-
-    // --- upsert class_schedules (externalId = kode|hari|mulai|selesai) -----------
     let scheduleCount = 0;
-    for (const s of schedules) {
-      const courseId = courseIdsByCode.get(s.courseCode || s.courseName);
-      if (!courseId || s.dayOfWeek === null || !s.startTime || !s.endTime) continue;
-      await upsertByExternal(classSchedules, userId, s.externalId, {
-        courseId,
-        dayOfWeek: s.dayOfWeek,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        room: s.room || null,
-      });
-      scheduleCount++;
+    if (shouldFetchJadwal && jadwalRows.length > 0) {
+      await setSyncStep(userId, "kursus");
+      const schedules = jadwalToSchedules(jadwalRows);
+      for (const s of schedules) {
+        const ext = s.courseCode || s.courseName;
+        if (!ext) continue;
+        const course = await upsertByExternal(courses, userId, ext, {
+          name: s.courseName || s.courseCode,
+          code: s.courseCode || null,
+          lecturer: s.lecturer || null,
+          credits: s.credits,
+          defaultRoom: s.room || null,
+        });
+        if (s.courseCode) courseIdsByCode.set(s.courseCode, course.id);
+        if (!courseIdsByCode.has(ext)) courseIdsByCode.set(ext, course.id);
+        courseCount++;
+      }
+
+      for (const s of schedules) {
+        const courseId = courseIdsByCode.get(s.courseCode || s.courseName);
+        if (!courseId || s.dayOfWeek === null || !s.startTime || !s.endTime) continue;
+        await upsertByExternal(classSchedules, userId, s.externalId, {
+          courseId,
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          room: s.room || null,
+        });
+        scheduleCount++;
+      }
     }
 
-    // --- upsert tasks dari iCal HE-BAT (externalId = UID event) ------------------
+    // --- upsert tasks dari iCal HE-BAT (Tier 1: selalu jalan tiap 30m) ---------
     await setSyncStep(userId, "tugas");
     const now = Date.now();
     let taskCount = 0, newTasks = 0, instructionCount = 0;
@@ -343,38 +420,46 @@ export async function runCampusSync(userId: string, opts: { force?: boolean } = 
       taskCount++;
     }
 
-    // --- upsert grades dari KHS (externalId = semesterId|kode) --------------------
+    // --- upsert grades dari KHS jika shouldFetchKhs ----------------------------
     await setSyncStep(userId, "nilai");
     let gradeCount = 0;
-    for (const sem of semRows.slice(0, MAX_KHS_SEMESTERS)) {
-      const semId = String(sem.ID_SEMESTER || sem.id || "");
-      if (!semId) continue;
-      const label = [sem.TAHUN_AJARAN, sem.NM_SEMESTER].filter(Boolean).join(" ").trim() || semId;
-      let khsRows: Record<string, unknown>[];
-      try {
-        khsRows = await client.khs(semId);
-      } catch (e: any) {
-        logger.warn(`sync ${userId}: KHS semester ${label} gagal: ${e?.message || e}`);
-        continue;
-      }
-      for (const g of khsToGrades(khsRows, label, semId)) {
-        const courseId = courseIdsByCode.get(g.courseCode || g.courseName);
-        if (!courseId) continue;
-        await upsertByExternal(grades, userId, g.externalId, {
-          courseId,
-          componentName: g.componentName,
-          score: g.score,
-          letterGrade: g.letterGrade || null,
-          gradePoint: g.gradePoint,
-        });
-        gradeCount++;
+    if (shouldFetchKhs && semRows.length > 0) {
+      // Jika force manual: fetch semua semester (maks 6 semester).
+      // Jika cron berkala: HANYA fetch semester aktif / berjalan (index 0).
+      const targetSemesters = opts.force
+        ? semRows.slice(0, MAX_KHS_SEMESTERS)
+        : semRows.slice(0, 1);
+
+      for (const sem of targetSemesters) {
+        const semId = String(sem.ID_SEMESTER || sem.id || "");
+        if (!semId) continue;
+        const label = [sem.TAHUN_AJARAN, sem.NM_SEMESTER].filter(Boolean).join(" ").trim() || semId;
+        let khsRows: Record<string, unknown>[];
+        try {
+          khsRows = await client.khs(semId);
+        } catch (e: any) {
+          logger.warn(`sync ${userId}: KHS semester ${label} gagal: ${e?.message || e}`);
+          continue;
+        }
+        for (const g of khsToGrades(khsRows, label, semId)) {
+          const courseId = courseIdsByCode.get(g.courseCode || g.courseName);
+          if (!courseId) continue;
+          await upsertByExternal(grades, userId, g.externalId, {
+            courseId,
+            componentName: g.componentName,
+            score: g.score,
+            letterGrade: g.letterGrade || null,
+            gradePoint: g.gradePoint,
+          });
+          gradeCount++;
+        }
       }
     }
 
-    // --- upsert campus_data: rekap presensi + info kampus (toleran per jenis) ----
+    // --- upsert campus_data: presensi (Tier 1) + info harian (Tier 2 due) ------
     await setSyncStep(userId, "info");
     let campusDataCount = 0;
-    await Promise.all(campusFetchers.map(async ({ jenis, fetch }) => {
+    await Promise.all(activeFetchers.map(async ({ jenis, fetch }) => {
       try {
         const rows = await fetch();
         const stored = jenis === "presensi" ? presensiToRecap(rows) : rows;

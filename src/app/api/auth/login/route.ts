@@ -134,7 +134,7 @@ async function bootstrapCampus(userId: string, jwt: string, nim: string, passwor
       }
     }
 
-    await runCampusSync(userId);
+    await runCampusSync(userId, { force: true });
   } catch (e: any) {
     logger.error(`bootstrap sync ${userId} gagal:`, e);
     await markSyncError(userId, e?.message || "Sync awal gagal");
