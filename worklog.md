@@ -60,3 +60,31 @@
 - `npm run quality`: 360/360 tes berhasil, 0 error ESLint/TypeScript.
 - `npm run test`: 360/360 lolos.
 
+---
+
+## [2026-08-20] Pembuatan Halaman /profil & Pemisahan Identitas Personal Mahasiswa
+
+### 1. Halaman Baru: `/profil` (`src/app/profil/page.tsx`)
+- **Data Diri Mahasiswa**:
+  - Menampilkan kartu identitas mahasiswa terverifikasi dari Kampus Kita (NIM, Tahun Angkatan, Jenjang, Program Studi, Status Akademik, Fakultas, Dosen Wali, serta metadata tambahan jika ada).
+  - Sinkron otomatis dari sumber yang sama (`/api/campus/info` & `/api/auth/me`).
+- **Preferensi Tampilan & Tema**:
+  - Pilihan visual interaktif antara **Paper & Ink (Mode Terang)** dan **Warm Charcoal (Mode Gelap)** yang tersinkron langsung dengan `localStorage` dan class HTML tanpa perlu reload.
+  - Link ringkas ke halaman `/pengaturan` untuk pengaturan sistem lanjutan (WhatsApp Assistant, Web Push, AI ForFH, Zona Waktu) guna mencegah duplikasi kontrol.
+- **Sesi & Keamanan**:
+  - Menampilkan status akun dan tombol **Keluar dari Akun (Logout)** yang membersihkan sesi server, token autentikasi, serta cache IndexedDB lokal.
+
+### 2. Pembersihan Halaman `/info-kampus`
+- Menghapus item `status_mhs` dari [`CAMPUS_JENIS_META`](src/components/campus/campusMeta.ts) sehingga section "Status Mahasiswa" tidak lagi ditampilkan di `/info-kampus`.
+- Seluruh section aktivitas & akademik lainnya (Rekap Kehadiran, Kalender Akademik, Dosen Wali, Masa Studi, SKS Aktif, Peserta Mata Kuliah, Riwayat HER, Penyerahan KTM, Pembayaran) tetap utuh.
+
+### 3. Interaktivitas Footer Drawer & Sidebar
+- **[`MobileMenuDrawer`](src/components/layout/MobileMenuDrawer.tsx)**: Footer profil (avatar + nama mahasiswa) kini berupa link tappable ke `/profil` dengan indikator panah, padding safe-area yang lega, dan otomatis menutup drawer saat di-tap.
+- **[`Sidebar`](src/components/layout/Sidebar.tsx)**: Baris profil desktop kini juga menjadi tautan aktif ke `/profil`.
+
+---
+**Status Verifikasi**:
+- `npm run quality`: 360/360 tes berhasil, 0 error ESLint/TypeScript.
+- `npm run build`: 66/66 route Next.js (termasuk `/profil`) ter-compile sukses.
+
+

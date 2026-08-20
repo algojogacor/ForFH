@@ -118,16 +118,25 @@ export function Sidebar({ user }: { user?: any }) {
           <span>Pengaturan</span>
         </Link>
 
-        <div className="px-2.5 py-2 flex items-center gap-2 pt-2 border-t border-border-subtle">
-          <div className="h-6 w-6 rounded-full bg-surface-3 flex items-center justify-center text-[11px] font-mono font-medium text-foreground shrink-0 select-none border border-border-default">
-            {user?.displayName?.[0] || user?.username?.[0] || "M"}
+        <Link
+          href="/profil"
+          className={cn(
+            "px-2.5 py-2 flex items-center justify-between gap-2 pt-2 border-t border-border-subtle rounded-md hover:bg-surface-2 transition-colors group select-none",
+            pathname === "/profil" && "bg-surface-1 font-semibold border-l-2 border-l-primary"
+          )}
+          title="Buka Profil Mahasiswa"
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="h-6 w-6 rounded-full bg-surface-3 flex items-center justify-center text-[11px] font-mono font-medium text-foreground shrink-0 select-none border border-border-default group-hover:border-primary/40 transition-colors">
+              {user?.displayName?.[0] || user?.username?.[0] || "M"}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-foreground truncate group-hover:text-primary transition-colors">
+                {user?.displayName || user?.username || "Mahasiswa"}
+              </p>
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-foreground truncate">
-              {user?.displayName || user?.username || "Mahasiswa"}
-            </p>
-          </div>
-        </div>
+        </Link>
       </div>
     </aside>
   );

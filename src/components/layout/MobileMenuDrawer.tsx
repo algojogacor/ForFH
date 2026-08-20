@@ -19,6 +19,7 @@ import {
   Settings,
   Building2,
   X,
+  ArrowRight,
   Sun,
   Moon,
   LogOut,
@@ -257,45 +258,33 @@ export function MobileMenuDrawer({
           </div>
         </div>
 
-        {/* Drawer Footer: User Profile & Quick Actions with Extended Safe Area Padding */}
-        <div className="px-4 py-3.5 border-t border-border-default bg-surface-2/60 shrink-0 flex items-center justify-between gap-3 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))]">
-          {/* User Info */}
-          <div className="flex items-center gap-3 min-w-0 flex-1 px-0.5">
-            <div className="h-9 w-9 rounded-full bg-surface-3 flex items-center justify-center text-xs font-mono font-semibold text-foreground shrink-0 select-none border border-border-default shadow-xs">
-              {user?.displayName?.[0] || user?.username?.[0] || "M"}
+        {/* Drawer Footer: User Profile Tappable Link with Extended Safe Area Padding */}
+        <div className="px-4 py-3 border-t border-border-default bg-surface-2/60 shrink-0 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))]">
+          <Link
+            href="/profil"
+            onClick={() => handleNavigate("/profil")}
+            className="flex items-center justify-between gap-3 p-2 -mx-2 rounded-lg hover:bg-surface-2 active:bg-surface-3 transition-colors group min-h-[48px]"
+          >
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="h-9 w-9 rounded-full bg-surface-3 flex items-center justify-center text-xs font-mono font-semibold text-foreground shrink-0 select-none border border-border-default shadow-xs group-hover:border-primary/40 transition-colors">
+                {user?.displayName?.[0] || user?.username?.[0] || "M"}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-foreground truncate leading-tight group-hover:text-primary transition-colors">
+                  {user?.displayName || user?.username || "Mahasiswa"}
+                </p>
+                <p className="text-[10px] font-mono text-muted-foreground truncate pt-0.5">
+                  {user?.username ? `@${user.username}` : "Akun Terhubung"} · Buka Profil
+                </p>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-foreground truncate leading-tight">
-                {user?.displayName || user?.username || "Mahasiswa"}
-              </p>
-              <p className="text-[10px] font-mono text-muted-foreground truncate pt-0.5">
-                {user?.username ? `@${user.username}` : "Akun Terhubung"}
-              </p>
+
+            <div className="flex items-center gap-1 text-muted-foreground group-hover:text-primary transition-colors shrink-0">
+              <span className="text-[11px] font-medium hidden xs:inline">Profil</span>
+              <X className="h-4 w-4 rotate-45 hidden" />
+              <ArrowRight className="h-4 w-4" />
             </div>
-          </div>
-
-          {/* Theme & Logout Utility Buttons */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={toggleTheme}
-              className="min-h-[44px] min-w-[44px] rounded-lg hover:bg-surface-3 flex items-center justify-center text-muted-foreground hover:text-foreground active:scale-95 transition-all"
-              title="Ubah Tema"
-              aria-label="Ubah tema"
-            >
-              <Sun className="h-4.5 w-4.5 hidden dark:block text-warning" />
-              <Moon className="h-4.5 w-4.5 block dark:hidden text-muted-foreground" />
-            </button>
-
-            <button
-              onClick={handleLogout}
-              disabled={isLoggingOut}
-              className="min-h-[44px] min-w-[44px] rounded-lg hover:bg-status-danger-subtle flex items-center justify-center text-muted-foreground hover:text-status-danger active:scale-95 transition-all"
-              title="Keluar"
-              aria-label="Keluar dari akun"
-            >
-              <LogOut className="h-4.5 w-4.5" />
-            </button>
-          </div>
+          </Link>
         </div>
       </div>
     </div>
