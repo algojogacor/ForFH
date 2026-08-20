@@ -34,3 +34,29 @@
 **Status Verifikasi**:
 - `npm run quality`: 360/360 tes berhasil, 0 error ESLint/TypeScript.
 - `npm run build`: 65/65 route Next.js ter-compile sukses.
+
+---
+
+## [2026-08-20] Polish Visual & Spacing Mobile Menu Drawer
+
+### 1. Kepadatan Visual / Breathing Room
+- Menambah vertical padding pada tiap baris item navigasi menjadi `py-3 px-3.5 min-h-[48px]` (sebelumnya `min-h-[44px] py-2`) serta gap antar icon-text `gap-3.5`.
+- Mengatur container scrollable dengan padding `px-4 pt-3 pb-5 space-y-5` agar navigasi terasa luas, nyaman dibaca, dan mudah disentuh di layar kecil.
+
+### 2. Peningkatan Kontras Item Aktif
+- Mengganti styling state aktif dari abu-abu gelap `bg-surface-2` menjadi warna aksen primer (`bg-primary/10 text-primary font-semibold border-l-4 border-l-primary shadow-xs`).
+- Icon dan teks item aktif berwarna `text-primary` konsisten dengan warna aksen "+ Tambah Tugas" / Paper & Ink identity (Dusty Navy di Light Mode & Glowing Cobalt di Dark Mode), menghasilkan kontras tinggi yang langsung terbaca.
+
+### 3. Pemisah Antar-Group yang Tegas
+- Menambahkan garis pemisah halus (`border-t border-border-default/60 pt-4`) di atas setiap group baru (AKADEMIK, PERANGKAT, PENGATURAN & AKUN).
+- Mempertegas label section dengan gaya `text-[11px] font-mono font-semibold uppercase tracking-widest text-muted-foreground/80`.
+
+### 4. Safe-Area Padding pada Footer Profil
+- Memperbaiki padding footer profil menjadi `px-4 py-3.5 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))]`.
+- Menjamin ruang minimal 20px pada perangkat standar (Android lama) dan ruang bebas aman dari home indicator bar pada iPhone berponi/notch (iPhone X–16).
+
+---
+**Status Verifikasi**:
+- `npm run quality`: 360/360 tes berhasil, 0 error ESLint/TypeScript.
+- `npm run test`: 360/360 lolos.
+

@@ -147,7 +147,7 @@ export function MobileMenuDrawer({
         </div>
 
         {/* Drawer Header */}
-        <div className="px-5 py-3 border-b border-border-default flex items-center justify-between shrink-0">
+        <div className="px-5 py-3.5 border-b border-border-default flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <span className="font-editorial italic text-xl font-medium tracking-tight text-foreground">
               ForFH
@@ -166,13 +166,22 @@ export function MobileMenuDrawer({
           </button>
         </div>
 
-        {/* Grouped Menu Links — Scrollable */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.label} className="space-y-1.5">
-              <div className="px-3 text-[11px] font-mono uppercase tracking-widest text-muted-foreground select-none">
+        {/* Grouped Menu Links — Scrollable with Breathing Room */}
+        <div className="flex-1 overflow-y-auto px-4 pt-3 pb-5 space-y-5">
+          {NAV_GROUPS.map((group, index) => (
+            <div
+              key={group.label}
+              className={cn(
+                "space-y-1.5",
+                index > 0 && "pt-4 border-t border-border-default/60"
+              )}
+            >
+              {/* Group Section Label with Distinct Visual Hierarchy */}
+              <div className="px-3.5 pb-0.5 text-[11px] font-mono font-semibold uppercase tracking-widest text-muted-foreground/80 select-none">
                 {group.label}
               </div>
+
+              {/* Navigation Items with Generous Tap Targets & Spacing */}
               <div className="space-y-1">
                 {group.items.map((item) => {
                   const Icon = item.icon;
@@ -187,19 +196,26 @@ export function MobileMenuDrawer({
                       href={item.href}
                       onClick={() => handleNavigate(item.href)}
                       className={cn(
-                        "flex items-center gap-3 px-3 min-h-[44px] rounded-lg text-sm font-medium transition-all select-none",
+                        "flex items-center gap-3.5 px-3.5 py-3 min-h-[48px] rounded-lg text-sm font-medium transition-all select-none",
                         isActive
-                          ? "bg-surface-2 text-foreground font-semibold border-l-3 border-l-primary shadow-xs"
-                          : "text-muted-foreground hover:bg-surface-2/70 hover:text-foreground active:bg-surface-3"
+                          ? "bg-primary/10 text-primary font-semibold border-l-4 border-l-primary shadow-xs"
+                          : "text-muted-foreground hover:bg-surface-2/80 hover:text-foreground active:bg-surface-3"
                       )}
                     >
                       <Icon
                         className={cn(
-                          "h-4 w-4 shrink-0",
+                          "h-4.5 w-4.5 shrink-0",
                           isActive ? "text-primary" : "text-muted-foreground"
                         )}
                       />
-                      <span className="truncate">{item.label}</span>
+                      <span
+                        className={cn(
+                          "truncate",
+                          isActive ? "text-primary font-semibold" : "text-foreground/90"
+                        )}
+                      >
+                        {item.label}
+                      </span>
                     </Link>
                   );
                 })}
@@ -207,69 +223,77 @@ export function MobileMenuDrawer({
             </div>
           ))}
 
-          {/* Pengaturan Section */}
-          <div className="space-y-1.5 pt-2 border-t border-border-subtle">
-            <div className="px-3 text-[11px] font-mono uppercase tracking-widest text-muted-foreground select-none">
+          {/* Pengaturan Section with Separator */}
+          <div className="space-y-1.5 pt-4 border-t border-border-default/60">
+            <div className="px-3.5 pb-0.5 text-[11px] font-mono font-semibold uppercase tracking-widest text-muted-foreground/80 select-none">
               Pengaturan & Akun
             </div>
             <Link
               href="/pengaturan"
               onClick={() => handleNavigate("/pengaturan")}
               className={cn(
-                "flex items-center gap-3 px-3 min-h-[44px] rounded-lg text-sm font-medium transition-all select-none",
+                "flex items-center gap-3.5 px-3.5 py-3 min-h-[48px] rounded-lg text-sm font-medium transition-all select-none",
                 pathname === "/pengaturan"
-                  ? "bg-surface-2 text-foreground font-semibold border-l-3 border-l-primary shadow-xs"
-                  : "text-muted-foreground hover:bg-surface-2/70 hover:text-foreground active:bg-surface-3"
+                  ? "bg-primary/10 text-primary font-semibold border-l-4 border-l-primary shadow-xs"
+                  : "text-muted-foreground hover:bg-surface-2/80 hover:text-foreground active:bg-surface-3"
               )}
             >
               <Settings
                 className={cn(
-                  "h-4 w-4 shrink-0",
+                  "h-4.5 w-4.5 shrink-0",
                   pathname === "/pengaturan" ? "text-primary" : "text-muted-foreground"
                 )}
               />
-              <span>Pengaturan Aplikasi & WhatsApp</span>
+              <span
+                className={cn(
+                  pathname === "/pengaturan"
+                    ? "text-primary font-semibold"
+                    : "text-foreground/90"
+                )}
+              >
+                Pengaturan Aplikasi & WhatsApp
+              </span>
             </Link>
           </div>
         </div>
 
-        {/* Drawer Footer: User Profile & Quick Actions */}
-        <div className="p-3 border-t border-border-default bg-surface-2/50 shrink-0 flex items-center justify-between gap-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        {/* Drawer Footer: User Profile & Quick Actions with Extended Safe Area Padding */}
+        <div className="px-4 py-3.5 border-t border-border-default bg-surface-2/60 shrink-0 flex items-center justify-between gap-3 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))]">
           {/* User Info */}
-          <div className="flex items-center gap-2.5 min-w-0 flex-1 px-1">
-            <div className="h-8 w-8 rounded-full bg-surface-3 flex items-center justify-center text-xs font-mono font-medium text-foreground shrink-0 select-none border border-border-default">
+          <div className="flex items-center gap-3 min-w-0 flex-1 px-0.5">
+            <div className="h-9 w-9 rounded-full bg-surface-3 flex items-center justify-center text-xs font-mono font-semibold text-foreground shrink-0 select-none border border-border-default shadow-xs">
               {user?.displayName?.[0] || user?.username?.[0] || "M"}
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-foreground truncate leading-tight">
                 {user?.displayName || user?.username || "Mahasiswa"}
               </p>
-              <p className="text-[10px] font-mono text-muted-foreground truncate">
+              <p className="text-[10px] font-mono text-muted-foreground truncate pt-0.5">
                 {user?.username ? `@${user.username}` : "Akun Terhubung"}
               </p>
             </div>
           </div>
 
           {/* Theme & Logout Utility Buttons */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={toggleTheme}
-              className="min-h-[44px] min-w-[44px] rounded-lg hover:bg-surface-3 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              className="min-h-[44px] min-w-[44px] rounded-lg hover:bg-surface-3 flex items-center justify-center text-muted-foreground hover:text-foreground active:scale-95 transition-all"
               title="Ubah Tema"
               aria-label="Ubah tema"
             >
-              <Sun className="h-4 w-4 hidden dark:block text-warning" />
-              <Moon className="h-4 w-4 block dark:hidden text-muted-foreground" />
+              <Sun className="h-4.5 w-4.5 hidden dark:block text-warning" />
+              <Moon className="h-4.5 w-4.5 block dark:hidden text-muted-foreground" />
             </button>
 
             <button
               onClick={handleLogout}
               disabled={isLoggingOut}
-              className="min-h-[44px] min-w-[44px] rounded-lg hover:bg-status-danger-subtle flex items-center justify-center text-muted-foreground hover:text-status-danger transition-colors"
+              className="min-h-[44px] min-w-[44px] rounded-lg hover:bg-status-danger-subtle flex items-center justify-center text-muted-foreground hover:text-status-danger active:scale-95 transition-all"
               title="Keluar"
               aria-label="Keluar dari akun"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-4.5 w-4.5" />
             </button>
           </div>
         </div>
