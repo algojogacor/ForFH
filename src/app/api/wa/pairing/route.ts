@@ -46,8 +46,8 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "request") {
-      // Re-pair setelah fatal (401/408): buka kunci fatal agar socket baru bisa diinisialisasi
-      if (manager.fatalReason) await manager.resetFatal();
+      // Re-pair / fresh QR: bersihkan sesi lama & buka kunci socket agar Baileys menghasilkan QR baru
+      await manager.resetFatal();
       await manager.ensureWaClient();
 
       // Tunggu QR dihasilkan Baileys jika belum ada di memory

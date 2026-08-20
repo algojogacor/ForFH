@@ -85,6 +85,7 @@ export interface WaManagerOptions {
   makeSocket?: (auth: AuthenticationState) => WASocket | Promise<WASocket>;
   loadAuth?: () => Promise<AuthenticationState>;
   persistCreds?: (creds: AuthenticationCreds) => Promise<void>;
+  clearAuth?: () => Promise<void>;
   readAuthFlag?: () => Promise<boolean>;
   persistAuthFlag?: (value: boolean) => Promise<void>;
   scheduleTimer?: (fn: () => void, delayMs: number) => void;
@@ -128,6 +129,7 @@ export class WaClientManager {
       },
       loadAuth: () => defaultStore.loadAuthState(),
       persistCreds: (creds) => defaultStore.saveCreds(creds),
+      clearAuth: () => defaultStore.clearAuthState(),
       readAuthFlag: async () => {
         const row = await db.select().from(schema.appConfig)
           .where(eq(schema.appConfig.key, WA_AUTH_INVALID_KEY)).limit(1).then((r) => r[0]);
@@ -249,16 +251,20 @@ export class WaClientManager {
   async clearAuthInvalidFlag(): Promise<void> { await this.options.persistAuthFlag(false); }
 
   /** Jalur pemulihan setelah re-pair (dipakai Task 7): buka kunci fatal —
-   *  fatalReason di-null, state "stopped", flag auth invalid dibersihkan, dan
-   *  timer pending dibatalkan. Panggil setelah pairing sukses; panggilan
-   *  ensureWaClient() berikutnya akan menginisialisasi socket baru. */
+   *  fatalReason di-null, state "stopped", flag auth invalid dibersihkan,
+   *  kredensial lama dihapus, dan timer pending dibatalkan. Panggil setelah pairing
+   *  sukses atau saat admin meminta scan QR baru. */
   async resetFatal(): Promise<void> {
     this.fatalReason = null;
     this.currentQr = null;
     this.state = "stopped";
+    this.authState = null;
+    try { this.socket?.end(new Error("reset")); } catch { /* noop */ }
+    this.socket = null;
     health.recordSocketState("stopped");
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     await this.clearAuthInvalidFlag();
+    try { await this.options.clearAuth(); } catch (err) { logger.warn("wa: clearAuth error saat resetFatal", err); }
   }
 
   // ---- internal ----
@@ -381,6 +387,10 @@ export class WaClientManager {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     try { this.socket?.end(new Error(reason)); } catch { /* noop */ }
     this.socket = null;
+    if (reason === "auth_invalid" || reason === "logged_out") {
+      this.authState = null;
+      void this.options.clearAuth().catch((err) => logger.warn("wa: clearAuth error saat stopFatal", err));
+    }
   }
 
   /** A3: backoff eksponensial 1s–60s + jitter ±20%; batas 10 upaya berurutan,

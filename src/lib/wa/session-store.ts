@@ -104,6 +104,12 @@ export class WaSessionStore implements SignalKeyStore {
       .onConflictDoUpdate({ target: schema.appConfig.key, set: { value: payload } });
   }
 
+  /** Bersihkan creds & signal keys saat logged_out / re-pair agar bot tidak mencoba login dengan sesi mati. */
+  async clearAuthState(): Promise<void> {
+    await this.db.delete(schema.appConfig).where(eq(schema.appConfig.key, WA_CREDS_KEY));
+    await this.db.delete(schema.waSignalKeys);
+  }
+
   /** Batch SELECT per namespace + decode. Value hilang = tidak ada.
    *  Baileys rc14 memakai DUA konvensi key:
    *  - lama: `type:jid` → satu baris per id (key = jid);

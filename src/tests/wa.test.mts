@@ -378,6 +378,7 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
         makeSocket: (() => { callCount++; const s = makeFakeSocket(); sockets.push(s); return s; }) as any,
         loadAuth: async () => ({ creds: { me: { id: "62812@lid" }, registered: false } as any, keys: {} as any }),
         persistCreds: async () => {},
+        clearAuth: async () => {},
         readAuthFlag: async () => authInvalid,
         persistAuthFlag: async (v) => { authInvalid = v; },
         // fire langsung (deterministik) — kecuali captureTimers (I2: tahan timer backoff)
@@ -973,6 +974,7 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
       makeSocket: (() => fakeSocket) as any,
       loadAuth: async () => ({ creds: { me: null, registered: false } as any, keys: {} as any }),
       persistCreds: async () => {},
+      clearAuth: async () => {},
       readAuthFlag: async () => authFlag,
       persistAuthFlag: async (v) => { authFlag = v; },
       scheduleTimer: (fn) => fn(),
