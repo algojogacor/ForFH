@@ -97,6 +97,8 @@ export class WaClientManager {
   state: WaSocketState = "stopped";
   /** Alasan fatal (auth_invalid | replaced | mismatch | forbidden | bad_session | unavailable | unknown) — mengunci auto-recreate. */
   fatalReason: string | null = null;
+  /** QR code aktif saat ini untuk pairing (null jika sudah terhubung atau socket belum menghasilkan QR). */
+  currentQr: string | null = null;
 
   private readonly options: Required<WaManagerOptions>;
   private socket: WASocket | null = null;
@@ -143,6 +145,7 @@ export class WaClientManager {
     };
   }
 
+  on(event: "qr", cb: (qr: string) => void | Promise<void>): void;
   on(event: "open", cb: (info: { isNewLogin: boolean }) => void | Promise<void>): void;
   on(event: "close", cb: (info: { classification: DisconnectClass; statusCode?: number }) => void | Promise<void>): void;
   on(event: "message", cb: (msg: WAMessage) => void | Promise<void>): void;
@@ -152,6 +155,35 @@ export class WaClientManager {
 
   isReady(): boolean {
     return this.state === "open" && !!this.socket;
+  }
+
+  getQr(): string | null {
+    return this.currentQr;
+  }
+
+  /** Menunggu QR code dihasilkan oleh socket Baileys dengan batas waktu (default 5s). */
+  async waitForQr(timeoutMs = 5000): Promise<string | null> {
+    if (this.currentQr) return this.currentQr;
+    if (this.isReady()) return null;
+
+    return new Promise<string | null>((resolve) => {
+      let settled = false;
+      const done = (val: string | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(val);
+      };
+
+      const timer = setTimeout(() => done(this.currentQr), timeoutMs);
+      const onQr = (qr: string) => done(qr);
+      const onOpen = () => done(null);
+      const onClose = () => done(null);
+
+      this.on("qr", onQr);
+      this.on("open", onOpen);
+      this.on("close", onClose);
+    });
   }
 
   async isAuthInvalid(): Promise<boolean> {
@@ -222,6 +254,7 @@ export class WaClientManager {
    *  ensureWaClient() berikutnya akan menginisialisasi socket baru. */
   async resetFatal(): Promise<void> {
     this.fatalReason = null;
+    this.currentQr = null;
     this.state = "stopped";
     health.recordSocketState("stopped");
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -263,7 +296,12 @@ export class WaClientManager {
 
   private async handleConnectionUpdate(sock: WASocket, update: any): Promise<void> {
     if (this.socket !== sock) return; // C1: event socket lama (sudah diganti) → abaikan
+    if (typeof update.qr === "string") {
+      this.currentQr = update.qr;
+      await this.emit("qr", update.qr);
+    }
     if (update.connection === "open") {
+      this.currentQr = null;
       this.state = "open";
       this.backoffAttempt = 0;
       this.unavailableAttempts = 0; // I3: kuota 503 juga di-reset saat open
@@ -274,6 +312,7 @@ export class WaClientManager {
       }
       await this.emit("open", { isNewLogin: !!update.isNewLogin });
     } else if (update.connection === "close") {
+      this.currentQr = null;
       await this.handleClose(update);
     } else if (update.connection === "connecting") {
       this.state = "connecting";
@@ -336,6 +375,7 @@ export class WaClientManager {
 
   private stopFatal(reason: string): void {
     this.fatalReason = reason;
+    this.currentQr = null;
     this.state = reason === "auth_invalid" ? "logged_out" : "error";
     health.recordSocketState(this.state);
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }

@@ -1,18 +1,31 @@
 // src/lib/wa/pairing.ts — A7: pairing state machine; state persist di
-// app_config key "wa_pairing" (survive restart). requestPairingCode tetap
-// dipakai, tetapi endpoint pairing TIDAK memanggilnya tanpa state tracking.
+// app_config key "wa_pairing" (survive restart). Mendukung QR Code Baileys 7
+// dan pairing code.
 import { eq } from "drizzle-orm";
 import { db, appConfig, type DB } from "@/lib/db";
 import type { WaClientManager } from "./client-manager";
 
 export type PairingState =
-  | "pairing_not_started" | "pairing_code_requested" | "waiting_for_phone"
-  | "pairing_success" | "pairing_failed";
+  | "pairing_not_started"
+  | "waiting_for_qr"
+  | "waiting_for_scan"
+  | "waiting_for_phone"
+  | "pairing_code_requested"
+  | "pairing_success"
+  | "pairing_failed";
 
-export type PairingEvent = "request" | "code_received" | "linked" | "expired" | "timeout_408" | "logged_out_401";
+export type PairingEvent =
+  | "request"
+  | "qr_received"
+  | "code_received"
+  | "linked"
+  | "expired"
+  | "timeout_408"
+  | "logged_out_401";
 
 export interface PairingRecord {
   state: PairingState;
+  qr?: string;
   code?: string;
   requestedAt?: number; // ms
   updatedAt: number;
@@ -24,16 +37,24 @@ export const PAIRING_EXPIRY_MS = 5 * 60_000; // safety net aplikasi; 408/401 pat
 /** Pure — transisi; event tak relevan → state tetap. */
 export function nextPairingState(current: PairingState, event: PairingEvent): PairingState {
   switch (event) {
-    case "request": // re-request membatalkan yang sebelumnya (A7)
-      return "pairing_code_requested";
+    case "request": // re-request membatalkan yang sebelumnya
+      return "waiting_for_qr";
+    case "qr_received":
+      return current === "waiting_for_qr" || current === "pairing_not_started" || current === "pairing_failed" || current === "waiting_for_scan"
+        ? "waiting_for_scan"
+        : current;
     case "code_received":
-      return current === "pairing_code_requested" ? "waiting_for_phone" : current;
+      return current === "pairing_code_requested" || current === "waiting_for_qr" ? "waiting_for_phone" : current;
     case "linked":
-      return current === "waiting_for_phone" ? "pairing_success" : current;
+      return current === "waiting_for_scan" || current === "waiting_for_qr" || current === "waiting_for_phone" || current === "pairing_code_requested"
+        ? "pairing_success"
+        : current;
     case "expired":
     case "timeout_408":
     case "logged_out_401":
-      return current === "waiting_for_phone" ? "pairing_failed" : current;
+      return current === "waiting_for_scan" || current === "waiting_for_qr" || current === "waiting_for_phone" || current === "pairing_code_requested"
+        ? "pairing_failed"
+        : current;
     default:
       return current;
   }
@@ -53,50 +74,63 @@ export async function setPairingState(rec: PairingRecord, store: DB = db): Promi
   return rec;
 }
 
-/** A7 — emitor jalur code_received: request sukses → kode diterima → menunggu
- *  phone. Route memanggil setelah requestPairingCode() berhasil; tanpa emitor
- *  ini state macet di pairing_code_requested, kode tidak pernah dikembalikan
- *  ke admin, dan safety-net expiry + hook close 401/408 tidak pernah aktif. */
+/** Emitor jalur qr_received: socket meng-emit QR → state waiting_for_scan. */
+export async function markPairingQrReceived(rec: PairingRecord, qr: string, store: DB = db): Promise<PairingRecord> {
+  const next = nextPairingState(rec.state, "qr_received");
+  return setPairingState({ ...rec, state: next, qr, updatedAt: Date.now() }, store);
+}
+
+/** Emitor jalur code_received: request pairing code sukses → menunggu phone. */
 export async function markPairingCodeReceived(rec: PairingRecord, store: DB = db): Promise<PairingRecord> {
   const next = nextPairingState(rec.state, "code_received");
   if (next === rec.state) return rec;
   return setPairingState({ ...rec, state: next, updatedAt: Date.now() }, store);
 }
 
-/** Pure — kode hanya ditampilkan saat waiting_for_phone (A7). */
+/** Pure — QR hanya ditampilkan saat waiting_for_scan atau waiting_for_qr. */
+export function qrForState(rec: PairingRecord): string | null {
+  return (rec.state === "waiting_for_scan" || rec.state === "waiting_for_qr") && rec.qr ? rec.qr : null;
+}
+
+/** Pure — kode hanya ditampilkan saat waiting_for_phone. */
 export function pairingCodeForState(rec: PairingRecord): string | null {
   return rec.state === "waiting_for_phone" && rec.code ? rec.code : null;
 }
 
-/** Kegagalan request kode (socket tidak siap / requestPairingCode throw):
- *  state langsung pairing_failed — state machine tidak punya transisi
- *  request-gagal (failed hanya tercapai saat menunggu phone). */
+/** Kegagalan request kode/QR: state langsung pairing_failed. */
 export async function failPairing(rec: PairingRecord, store: DB = db): Promise<PairingRecord> {
-  return setPairingState({ ...rec, state: "pairing_failed", updatedAt: Date.now() }, store);
+  return setPairingState({ ...rec, state: "pairing_failed", qr: undefined, code: undefined, updatedAt: Date.now() }, store);
 }
 
-// Flag per-instance (WeakSet), bukan module-level: guard tidak boleh
-// memblokir hooks untuk manager kedua (A1 — deployment = 1 manager, tapi
-// guard tetap per-instance).
+// Flag per-instance (WeakSet), bukan module-level
 const hookedManagers = new WeakSet<WaClientManager>();
 
-/** Wire transisi via event manager (dipanggil client-manager via import
- *  dinamis saat socket dibuat). pairing_success = open + isNewLogin. */
+/** Wire transisi via event manager (dipanggil client-manager via import dinamis saat socket dibuat). */
 export function registerPairingHooks(manager: WaClientManager): void {
   if (hookedManagers.has(manager)) return;
   hookedManagers.add(manager);
+
+  manager.on("qr", async (qr) => {
+    const rec = await getPairingState();
+    await markPairingQrReceived({
+      ...rec,
+      requestedAt: rec.requestedAt ?? Date.now(),
+    }, qr);
+  });
+
   manager.on("open", async ({ isNewLogin }) => {
     const rec = await getPairingState();
-    if (isNewLogin && (rec.state === "waiting_for_phone" || rec.state === "pairing_code_requested")) {
-      await setPairingState({ ...rec, state: "pairing_success", updatedAt: Date.now() });
+    if (isNewLogin || rec.state === "waiting_for_scan" || rec.state === "waiting_for_qr" || rec.state === "waiting_for_phone" || rec.state === "pairing_code_requested") {
+      await setPairingState({ ...rec, state: "pairing_success", qr: undefined, code: undefined, updatedAt: Date.now() });
       await manager.clearAuthInvalidFlag();
     }
   });
+
   manager.on("close", async ({ classification, statusCode }) => {
     const rec = await getPairingState();
-    if (rec.state !== "waiting_for_phone") return;
+    if (rec.state !== "waiting_for_scan" && rec.state !== "waiting_for_qr" && rec.state !== "waiting_for_phone" && rec.state !== "pairing_code_requested") return;
     if (classification === "logged_out" || statusCode === 408) {
-      await setPairingState({ ...rec, state: "pairing_failed", updatedAt: Date.now() });
+      await setPairingState({ ...rec, state: "pairing_failed", qr: undefined, code: undefined, updatedAt: Date.now() });
     }
   });
 }

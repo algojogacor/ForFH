@@ -19,7 +19,7 @@ import { processIncomingMessage } from "../lib/wa/pipeline";
 import type { MessageDeps } from "../lib/wa/pipeline";
 import { WaSendService } from "../lib/wa/send";
 import { decideDeliveryChannel, trySendWaReminder } from "../lib/notifications/worker";
-import { nextPairingState, getPairingState, setPairingState, markPairingCodeReceived, failPairing, pairingCodeForState } from "../lib/wa/pairing";
+import { nextPairingState, getPairingState, setPairingState, markPairingQrReceived, markPairingCodeReceived, failPairing, qrForState, pairingCodeForState, registerPairingHooks } from "../lib/wa/pairing";
 import { parseJadwalScope } from "../lib/wa/executors/jadwal";
 
 // DDL minimal untuk :memory: — jaga sinkron dgn schema.ts waBindings/waSignalKeys
@@ -913,42 +913,82 @@ export async function runWaTests(assert: (condition: boolean, name: string) => v
     assert(def.scope === "hari_ini" && def.dayOfWeek === 4, "parseJadwalScope: tanpa args → hari ini (Kamis, 4)");
   }
 
-  // ===== F1 — Pairing state machine (pure, A7) =====
+  // ===== F1 — Pairing state machine (pure, A7 + QR Code Baileys 7) =====
   {
-    assert(nextPairingState("pairing_not_started", "request") === "pairing_code_requested", "start → request → code_requested");
-    assert(nextPairingState("pairing_code_requested", "code_received") === "waiting_for_phone", "code_received → waiting_for_phone");
-    assert(nextPairingState("waiting_for_phone", "linked") === "pairing_success", "linked → pairing_success");
-    assert(nextPairingState("waiting_for_phone", "expired") === "pairing_failed", "expired → pairing_failed");
-    assert(nextPairingState("waiting_for_phone", "timeout_408") === "pairing_failed", "408 selama menunggu → pairing_failed");
-    assert(nextPairingState("waiting_for_phone", "logged_out_401") === "pairing_failed", "401 selama menunggu → pairing_failed");
-    assert(nextPairingState("pairing_failed", "request") === "pairing_code_requested", "failed → request (minta kode baru)");
-    assert(nextPairingState("pairing_success", "request") === "pairing_code_requested", "re-pair dari success → request");
+    assert(nextPairingState("pairing_not_started", "request") === "waiting_for_qr", "start → request → waiting_for_qr");
+    assert(nextPairingState("waiting_for_qr", "qr_received") === "waiting_for_scan", "qr_received → waiting_for_scan");
+    assert(nextPairingState("waiting_for_scan", "linked") === "pairing_success", "linked → pairing_success");
+    assert(nextPairingState("waiting_for_scan", "expired") === "pairing_failed", "expired → pairing_failed");
+    assert(nextPairingState("waiting_for_scan", "timeout_408") === "pairing_failed", "408 selama menunggu scan → pairing_failed");
+    assert(nextPairingState("waiting_for_scan", "logged_out_401") === "pairing_failed", "401 selama menunggu scan → pairing_failed");
+    assert(nextPairingState("pairing_failed", "request") === "waiting_for_qr", "failed → request (minta QR baru)");
+    assert(nextPairingState("pairing_success", "request") === "waiting_for_qr", "re-pair dari success → request");
     assert(nextPairingState("pairing_success", "linked") === "pairing_success", "event tak relevan → state tetap");
+
+    // Jalur legacy pairing code
+    assert(nextPairingState("pairing_code_requested", "code_received") === "waiting_for_phone", "legacy: code_received → waiting_for_phone");
+    assert(nextPairingState("waiting_for_phone", "linked") === "pairing_success", "legacy: linked → pairing_success");
   }
 
-  // ===== F1 — Pairing persist + code_received wiring (A7) =====
+  // ===== F1 — Pairing persist + QR & code helpers + event hooks wiring =====
   {
-    // Emitor code_received: rantai penuh request → code diterima → menunggu phone
+    // Emitor qr_received: rantai request → QR diterima → menunggu scan
     assert(
-      nextPairingState(nextPairingState("pairing_not_started", "request"), "code_received") === "waiting_for_phone",
-      "rantai request → code_received → waiting_for_phone (emitor jalur lengkap)"
+      nextPairingState(nextPairingState("pairing_not_started", "request"), "qr_received") === "waiting_for_scan",
+      "rantai request → qr_received → waiting_for_scan (emitor jalur QR)"
     );
-    // Return code (route GET pairing): hanya saat waiting_for_phone
+
+    // Return QR (qrForState): hanya saat waiting_for_scan atau waiting_for_qr
+    assert(qrForState({ state: "waiting_for_scan", qr: "2@fakeqr", updatedAt: 1 }) === "2@fakeqr", "QR dikembalikan saat waiting_for_scan");
+    assert(qrForState({ state: "waiting_for_qr", qr: "2@fakeqr", updatedAt: 1 }) === "2@fakeqr", "QR dikembalikan saat waiting_for_qr");
+    assert(qrForState({ state: "pairing_success", qr: "2@fakeqr", updatedAt: 1 }) === null, "QR TIDAK dikembalikan saat pairing_success");
+    assert(qrForState({ state: "pairing_failed", qr: "2@fakeqr", updatedAt: 1 }) === null, "QR TIDAK dikembalikan saat pairing_failed");
+
+    // Return code (pairingCodeForState): hanya saat waiting_for_phone
     assert(pairingCodeForState({ state: "waiting_for_phone", code: "ABCD-EFGH", updatedAt: 1 }) === "ABCD-EFGH", "kode dikembalikan saat waiting_for_phone");
-    assert(pairingCodeForState({ state: "pairing_code_requested", code: "ABCD-EFGH", updatedAt: 1 }) === null, "kode TIDAK dikembalikan saat pairing_code_requested");
+    assert(pairingCodeForState({ state: "waiting_for_scan", code: "ABCD-EFGH", updatedAt: 1 }) === null, "kode TIDAK dikembalikan saat waiting_for_scan");
     assert(pairingCodeForState({ state: "pairing_failed", code: "ABCD-EFGH", updatedAt: 1 }) === null, "kode TIDAK dikembalikan saat pairing_failed");
 
-    // Persist round-trip app_config + markPairingCodeReceived/failPairing (memDb)
+    // Persist round-trip app_config + markPairingQrReceived / failPairing (memDb)
     const memDb = await createMemDb();
-    let rec = await setPairingState({ state: "pairing_code_requested", code: "ABCD-EFGH", requestedAt: 123, updatedAt: 1 }, memDb);
+    let rec = await setPairingState({ state: "waiting_for_qr", requestedAt: 123, updatedAt: 1 }, memDb);
     const loaded = await getPairingState(memDb);
-    assert(loaded.state === "pairing_code_requested" && loaded.code === "ABCD-EFGH" && loaded.requestedAt === 123, "setPairingState → getPairingState round-trip (code + requestedAt persist)");
-    rec = await markPairingCodeReceived(rec, memDb);
+    assert(loaded.state === "waiting_for_qr" && loaded.requestedAt === 123, "setPairingState → getPairingState round-trip");
+    rec = await markPairingQrReceived(rec, "2@realqrdata", memDb);
     const after = await getPairingState(memDb);
-    assert(rec.state === "waiting_for_phone" && after.state === "waiting_for_phone" && after.code === "ABCD-EFGH", "markPairingCodeReceived: code_received → waiting_for_phone ter-persist, kode tetap");
-    const kept = await markPairingCodeReceived({ state: "pairing_success", updatedAt: 1 }, memDb);
-    assert(kept.state === "pairing_success", "code_received dari pairing_success → state tetap (event tak relevan)");
-    const failed = await failPairing({ state: "pairing_code_requested", updatedAt: 1 }, memDb);
-    assert(failed.state === "pairing_failed" && (await getPairingState(memDb)).state === "pairing_failed", "failPairing: request gagal → pairing_failed ter-persist");
+    assert(rec.state === "waiting_for_scan" && after.state === "waiting_for_scan" && after.qr === "2@realqrdata", "markPairingQrReceived: qr_received → waiting_for_scan ter-persist, QR tersimpan");
+
+    const failed = await failPairing({ state: "waiting_for_scan", qr: "2@realqrdata", updatedAt: 1 }, memDb);
+    assert(failed.state === "pairing_failed" && (await getPairingState(memDb)).state === "pairing_failed", "failPairing: state pairing_failed ter-persist");
+
+    // Manager QR events & hooks
+    const fakeSocket: any = {
+      ev: { on: (ev: string, cb: any) => { fakeSocket.handlers[ev] = cb; } },
+      handlers: {} as Record<string, (p: any) => void>,
+      sendMessage: async () => ({}),
+      end: () => {},
+    };
+    let authFlag = false;
+    const testManager = new WaClientManager({
+      makeSocket: (() => fakeSocket) as any,
+      loadAuth: async () => ({ creds: { me: null, registered: false } as any, keys: {} as any }),
+      persistCreds: async () => {},
+      readAuthFlag: async () => authFlag,
+      persistAuthFlag: async (v) => { authFlag = v; },
+      scheduleTimer: (fn) => fn(),
+    });
+
+    await testManager.ensureWaClient();
+    assert(testManager.getQr() === null, "sebelum QR event → getQr() null");
+
+    // Emitted connection.update { qr }
+    let emittedQr: string | null = null;
+    testManager.on("qr", (qr) => { emittedQr = qr; });
+    fakeSocket.handlers["connection.update"]({ qr: "2@testqr123" });
+    assert(testManager.getQr() === "2@testqr123" && emittedQr === "2@testqr123", "connection.update { qr } → manager.currentQr tersimpan & event qr terpancar");
+
+    // Emitted open → clears currentQr
+    fakeSocket.handlers["connection.update"]({ connection: "open", isNewLogin: true });
+    assert(testManager.getQr() === null, "connection: open → currentQr dibersihkan menjadi null");
   }
 }

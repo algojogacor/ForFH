@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import QRCode from "qrcode";
+import { QrCode, RefreshCw, Smartphone, CheckCircle2, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -19,10 +21,10 @@ const BOT_LABEL: Record<string, string> = {
   open: "🟢 Online",
   starting: "🟡 Menghubungkan…",
   connecting: "🟡 Menghubungkan…",
-  reconnecting: "🟡 Reconnecting…",
+  reconnecting: "🟡 Menghubungkan ulang…",
   closing: "🟡 Menutup…",
-  logged_out: "🔴 Perlu pairing ulang",
-  error: "🔴 Error — pairing ulang",
+  logged_out: "🔴 Perlu scan QR ulang",
+  error: "🔴 Terputus — perlu scan QR ulang",
   stopped: "⚪ Offline",
 };
 
@@ -38,13 +40,23 @@ export default function WhatsAppCard() {
   const [step, setStep] = useState<"idle" | "otp">("idle");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+  const [rawQr, setRawQr] = useState<string | null>(null);
   const [pairState, setPairState] = useState<string | null>(null);
+  const [showQrBox, setShowQrBox] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/wa/status");
-      if (res.ok) setStatus(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setStatus(data);
+        if (data.botConnected) {
+          setShowQrBox(false);
+          setQrCodeDataUrl(null);
+          setRawQr(null);
+        }
+      }
     } catch { /* server belum siap — polling berikutnya */ }
   }, []);
 
@@ -54,10 +66,41 @@ export default function WhatsAppCard() {
     return () => clearInterval(timer);
   }, [fetchStatus]);
 
-  // OTP & unlink = POST; pairing action = GET (route spec Step 6 — API
-  // contract). fetch() default GET tidak akan sampai ke route POST, dan GET
-  // pairing butuh cache: "no-store" agar tiap klik benar-benar memanggil
-  // server (bukan respons Next.js dari cache).
+  // Polling QR / status cepat saat QR box sedang terbuka
+  useEffect(() => {
+    if (!showQrBox || status?.botConnected) return;
+
+    const pollPairing = async () => {
+      try {
+        const res = await fetch("/api/wa/pairing", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        setPairState(data.state);
+
+        if (data.state === "pairing_success" || data.linked) {
+          setShowQrBox(false);
+          setQrCodeDataUrl(null);
+          setRawQr(null);
+          await fetchStatus();
+          return;
+        }
+
+        if (data.qr && data.qr !== rawQr) {
+          setRawQr(data.qr);
+          const dataUrl = await QRCode.toDataURL(data.qr, {
+            margin: 2,
+            width: 256,
+            color: { dark: "#0f172a", light: "#ffffff" },
+          });
+          setQrCodeDataUrl(dataUrl);
+        }
+      } catch { /* polling fail-safe */ }
+    };
+
+    const interval = setInterval(() => void pollPairing(), 3_000);
+    return () => clearInterval(interval);
+  }, [showQrBox, rawQr, status?.botConnected, fetchStatus]);
+
   async function api(path: string, body?: unknown) {
     setBusy(true); setError(null);
     try {
@@ -103,17 +146,31 @@ export default function WhatsAppCard() {
     catch (e: any) { setError(e.message); }
   }
 
-  async function requestPair() {
+  async function requestPairQr() {
+    setShowQrBox(true);
+    setError(null);
     try {
       const data = await apiGet("/api/wa/pairing?action=request");
-      setPairCode(data.code ?? null);
       setPairState(data.state);
+      if (data.qr) {
+        setRawQr(data.qr);
+        const dataUrl = await QRCode.toDataURL(data.qr, {
+          margin: 2,
+          width: 256,
+          color: { dark: "#0f172a", light: "#ffffff" },
+        });
+        setQrCodeDataUrl(dataUrl);
+      } else {
+        setQrCodeDataUrl(null);
+      }
+      if (data.state === "pairing_success" || data.linked) {
+        setShowQrBox(false);
+        await fetchStatus();
+      }
     } catch (e: any) { setError(e.message); }
   }
 
   const health = status?.health;
-  // A6: possibly_silent ≠ unhealthy — tampilkan fakta, bukan alarm;
-  // lastMessageEvent null segera setelah connect → basis sehat (lastConnectionUpdate)
   const silentMinutes = health?.lastMessageEvent
     ? Math.floor((Date.now() - health.lastMessageEvent) / 60_000)
     : null;
@@ -122,47 +179,117 @@ export default function WhatsAppCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-xs font-semibold">Asisten WhatsApp</CardTitle>
+        <CardTitle className="text-xs font-semibold flex items-center gap-2">
+          <span>Asisten WhatsApp</span>
+        </CardTitle>
         <CardDescription>Notifikasi & chat asisten via WhatsApp (nomor bot terpusat).</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Status bot */}
-        <div className="flex items-center justify-between rounded-lg border p-3">
+        <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/20">
           <div>
             <p className="text-sm font-medium">{botLabel}</p>
             <p className="text-xs text-muted-foreground">
-              {status?.botPhone ? `Nomor bot: ${status.botPhone}` : "Bot belum dipasangkan"}
+              {status?.botPhone ? `Nomor bot: ${status.botPhone}` : "Bot belum terhubung"}
               {health?.status === "possibly_silent" && silentMinutes != null
                 ? ` · online, tak ada pesan masuk sejak ${formatSilent(silentMinutes)}`
                 : ""}
             </p>
           </div>
           {status?.canPair && !status.botConnected && (
-            <Button size="sm" onClick={requestPair} disabled={busy}>Tampilkan kode</Button>
+            <Button size="sm" onClick={requestPairQr} disabled={busy} className="flex items-center gap-1.5">
+              <QrCode className="h-4 w-4" />
+              <span>{showQrBox ? "Perbarui QR" : "Scan QR Code"}</span>
+            </Button>
           )}
         </div>
-        {pairCode && (
-          <div className="rounded-lg border border-dashed p-3 text-sm">
-            <p className="font-mono text-lg font-bold tracking-widest">{pairCode}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Buka WhatsApp di HP → Perangkat tertaut → Tautkan perangkat → masukkan kode ini.
-              {pairState === "pairing_failed" ? " Kode kedaluwarsa — minta kode baru." : ""}
-            </p>
+
+        {/* QR Code Container */}
+        {showQrBox && !status?.botConnected && (
+          <div className="rounded-xl border bg-card p-5 shadow-sm space-y-4 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <Smartphone className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold">Tautkan Akun WhatsApp Bot</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setShowQrBox(false)}
+              >
+                Tutup
+              </Button>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-6">
+              {/* QR Image Box */}
+              <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl shadow-inner border border-slate-200 shrink-0 w-[240px] h-[240px]">
+                {qrCodeDataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={qrCodeDataUrl}
+                    alt="WhatsApp Pairing QR Code"
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground text-center p-4">
+                    <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+                    <p className="text-xs text-slate-700">Menyiapkan QR Code dari server WhatsApp…</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Instructions */}
+              <div className="space-y-2 text-xs text-muted-foreground leading-relaxed">
+                <p className="font-semibold text-foreground text-sm">Langkah menghubungkan:</p>
+                <ol className="list-decimal pl-4 space-y-1 text-slate-600 dark:text-slate-300">
+                  <li>Buka WhatsApp di ponsel bot Anda.</li>
+                  <li>Ketuk ikon <strong>Menu (⋮)</strong> di Android atau <strong>Pengaturan</strong> di iPhone.</li>
+                  <li>Pilih <strong>Perangkat Tertaut</strong> (<em>Linked Devices</em>).</li>
+                  <li>Ketuk tombol <strong>Tautkan Perangkat</strong>.</li>
+                  <li>Arahkan kamera ponsel Anda ke QR code di samping.</li>
+                </ol>
+
+                {pairState === "pairing_failed" && (
+                  <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400 font-medium pt-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>QR Code kedaluwarsa. Silakan muat ulang QR.</span>
+                  </div>
+                )}
+
+                <div className="pt-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={requestPairQr}
+                    disabled={busy}
+                    className="h-8 text-xs flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
+                    <span>Muat Ulang QR</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
         {/* Binding user */}
         {status?.myStatus === "active" && status.myPhone ? (
           <div className="flex items-center justify-between rounded-lg border p-3">
-            <p className="text-sm">Terhubung: <span className="font-medium">{status.myPhone}</span></p>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <p className="text-sm">Nomor Anda: <span className="font-medium">{status.myPhone}</span></p>
+            </div>
             <Button size="sm" variant="outline" onClick={unlink} disabled={busy}>Putuskan</Button>
           </div>
         ) : (
           <div className="space-y-2 rounded-lg border p-3">
             <p className="text-sm">
               {status?.myStatus === "pending"
-                ? "Masukkan kode OTP yang dikirim ke nomor kamu."
-                : "Hubungkan nomor WhatsApp kamu untuk notifikasi di chat."}
+                ? "Masukkan kode OTP yang dikirim ke nomor Anda."
+                : "Hubungkan nomor WhatsApp Anda untuk menerima notifikasi & berinteraksi dengan asisten."}
             </p>
             <div className="flex gap-2">
               <Input
@@ -183,7 +310,7 @@ export default function WhatsAppCard() {
                   <Button onClick={verifyOtp} disabled={busy}>Verifikasi</Button>
                 </>
               ) : (
-                <Button onClick={requestOtp} disabled={busy || !phone.trim()}>Kirim kode</Button>
+                <Button onClick={requestOtp} disabled={busy || !phone.trim()}>Kirim kode OTP</Button>
               )}
             </div>
             {step === "otp" && (
