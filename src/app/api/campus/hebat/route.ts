@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db, campusAccounts, campusData } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { getClientIp } from "@/lib/auth/ip";
 import { connectHebat, fetchCourseInstructions } from "@/lib/campus/hebat";
 import { saveHebatToken, upsertCampusData } from "@/lib/campus/sync";
 import { logger } from "@/lib/logger";
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const password = String(body.password || "");
 
-  const ip = req.headers.get("x-forwarded-for") || "anonymous-client";
+  const ip = getClientIp(req);
   const rateLimit = await checkRateLimit(`hebat-connect:${session.id}:${ip}`, {
     maxAttempts: 5,
     windowMs: 5 * 60 * 1000,
